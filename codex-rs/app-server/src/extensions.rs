@@ -93,6 +93,8 @@ pub(crate) fn thread_extensions(
         git_attribution_base_url,
         http_client_factory,
     );
+    // Hanzo: Kai decides in the loop; it runs only for a profile with a kai.toml.
+    hanzo_kai::install(&mut builder, thread_manager.clone());
     codex_guardian_v2::install(&mut builder, auth_manager.clone(), thread_manager);
     codex_memories_extension::install(&mut builder, codex_otel::global());
     codex_mcp_extension::install(&mut builder);

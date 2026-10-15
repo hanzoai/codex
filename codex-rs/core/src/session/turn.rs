@@ -233,6 +233,34 @@ pub(crate) async fn run_turn(
     }
 
     let user_input = turn_user_input(&input);
+    // Hanzo: the thread's controller adds routing hints to the turn's request metadata.
+    if let Some(handle) = sess
+        .services
+        .thread_extension_data
+        .get::<hanzo_loop::Handle>()
+    {
+        let request = hanzo_loop::Request {
+            text: user_input
+                .iter()
+                .filter_map(|item| match item {
+                    UserInput::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            images: user_input
+                .iter()
+                .any(|item| matches!(item, UserInput::Image { .. } | UserInput::LocalImage { .. })),
+        };
+        let hints = handle.route(&turn_context.sub_id, request).await;
+        if !hints.is_empty() {
+            let mut metadata = turn_context.config.responses_api_metadata.clone();
+            metadata.extend(hints);
+            turn_context
+                .turn_metadata_state
+                .set_responses_api_metadata(metadata);
+        }
+    }
     let allow_plugin_mentions =
         !crate::guardian::is_basic_session_source(&turn_context.session_source);
     let McpStartupRequirements {
@@ -1958,6 +1986,23 @@ pub(crate) async fn built_tools(
             .instrument(trace_span!("built_tools.load_discoverable_tools"))
             .await
         };
+    // Hanzo: the thread's controller shortlists this step's MCP tools.
+    if let Some(handle) = sess
+        .services
+        .thread_extension_data
+        .get::<hanzo_loop::Handle>()
+    {
+        let cards = all_mcp_tools
+            .iter()
+            .map(|tool| hanzo_loop::Card {
+                name: tool.canonical_tool_name().to_string(),
+                description: tool.tool.description.as_deref().unwrap_or_default().to_string(),
+            })
+            .collect();
+        if let Some(shortlist) = handle.tools(&turn_context.sub_id, cards).await {
+            step_store.insert(shortlist);
+        }
+    }
     Ok(Arc::new(build_tool_router(
         sess,
         turn_context,

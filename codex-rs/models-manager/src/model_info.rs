@@ -96,10 +96,14 @@ fn is_h1_heading(line: &str) -> bool {
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
-    warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    let known = hanzo_config::catalog::find(slug);
+    if known.is_none() {
+        warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    }
+    let window = known.map_or(272_000, |model| model.window);
     ModelInfo {
         slug: slug.to_string(),
-        display_name: slug.to_string(),
+        display_name: known.map_or_else(|| slug.to_string(), |model| model.name.to_string()),
         description: None,
         default_reasoning_level: None,
         supported_reasoning_levels: Vec::new(),
@@ -125,14 +129,17 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         web_search_tool_type: WebSearchToolType::Text,
         truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_image_detail_original: false,
-        context_window: Some(272_000),
-        max_context_window: Some(272_000),
+        context_window: Some(window),
+        max_context_window: Some(window),
         auto_compact_token_limit: None,
         comp_hash: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: true, // this is the fallback model metadata
+        input_modalities: match known {
+            Some(model) if !model.vision => vec![codex_protocol::openai_models::InputModality::Text],
+            _ => default_input_modalities(),
+        },
+        used_fallback_model_metadata: known.is_none(),
         supports_search_tool: false,
         supports_experimental_context: false,
         use_responses_lite: false,

@@ -96,12 +96,10 @@ fn resolve_sandbox_permissions(
     sandbox_permissions: Option<SandboxPermissions>,
     justification: Option<&str>,
 ) -> Result<SandboxPermissions, FunctionCallError> {
-    if justification.is_some() && sandbox_permissions.is_none() {
-        return Err(FunctionCallError::RespondToModel(
-            "`justification` requires an explicit `sandbox_permissions`; use `sandbox_permissions: \"require_escalated\"` for unsandboxed execution, or omit `justification`.".to_string(),
-        ));
-    }
-
+    // A justification explains an escalation. With none asked for there is
+    // nothing for it to explain, so the call runs at the default permissions
+    // rather than failing.
+    let _ = justification;
     Ok(sandbox_permissions.unwrap_or_default())
 }
 

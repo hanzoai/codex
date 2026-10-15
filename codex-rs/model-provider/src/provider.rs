@@ -430,6 +430,10 @@ impl ModelProvider for ConfiguredModelProvider {
     }
 
     fn approval_review_preferred_model(&self) -> &'static str {
+        // Hanzo: api.hanzo.ai serves none of OpenAI's own ids; Enso routes the review.
+        if hanzo_config::is_hanzo(self.info.base_url.as_deref()) {
+            return hanzo_config::DEFAULT_MODEL;
+        }
         if self
             .auth_manager
             .as_ref()
@@ -440,6 +444,20 @@ impl ModelProvider for ConfiguredModelProvider {
         } else {
             DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL
         }
+    }
+
+    fn memory_extraction_preferred_model(&self) -> &'static str {
+        if hanzo_config::is_hanzo(self.info.base_url.as_deref()) {
+            return hanzo_config::DEFAULT_MODEL;
+        }
+        DEFAULT_MEMORY_EXTRACTION_PREFERRED_MODEL
+    }
+
+    fn memory_consolidation_preferred_model(&self) -> &'static str {
+        if hanzo_config::is_hanzo(self.info.base_url.as_deref()) {
+            return hanzo_config::DEFAULT_MODEL;
+        }
+        DEFAULT_MEMORY_CONSOLIDATION_PREFERRED_MODEL
     }
 
     fn auth_manager(&self) -> Option<Arc<AuthManager>> {

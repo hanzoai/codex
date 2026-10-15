@@ -164,6 +164,39 @@ impl ToolOrchestrator {
         let requirement = tool.exec_approval_requirement(req).unwrap_or_else(|| {
             default_exec_approval_requirement(approval_policy, &file_system_sandbox_policy)
         });
+        // Hanzo: the thread's controller joins the policy on allow < ask < deny; it never
+        // loosens it.
+        let requirement = match tool_ctx
+            .session
+            .services
+            .thread_extension_data
+            .get::<hanzo_loop::Handle>()
+        {
+            None => requirement,
+            Some(handle) => {
+                let policy = match &requirement {
+                    ExecApprovalRequirement::Skip { .. } => hanzo_loop::Verdict::Allow,
+                    ExecApprovalRequirement::NeedsApproval { .. } => hanzo_loop::Verdict::Ask,
+                    ExecApprovalRequirement::Forbidden { .. } => hanzo_loop::Verdict::Deny,
+                };
+                let action = tool
+                    .approval_action(req, &tool_ctx.call_id)
+                    .ok()
+                    .and_then(|action| serde_json::to_value(action).ok())
+                    .unwrap_or_default();
+                let turn = &tool_ctx.step_context.turn.sub_id;
+                match handle.command(turn, &tool_ctx.call_id, policy, action).await {
+                    verdict if verdict == policy => requirement,
+                    hanzo_loop::Verdict::Deny => ExecApprovalRequirement::Forbidden {
+                        reason: "Kai refused this command.".to_string(),
+                    },
+                    _ => ExecApprovalRequirement::NeedsApproval {
+                        reason: Some("Kai asks before this command runs.".to_string()),
+                        proposed_execpolicy_amendment: None,
+                    },
+                }
+            }
+        };
         match &requirement {
             ExecApprovalRequirement::Skip { .. } => {
                 if strict_auto_review {

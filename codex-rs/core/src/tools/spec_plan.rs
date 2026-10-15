@@ -163,6 +163,23 @@ pub(crate) fn build_tool_router(
         &registered_mcp_tools,
         &mut registry,
     );
+    // Hanzo: MCP tools off the controller's shortlist leave direct view; tool search
+    // still finds them when the model supports it.
+    if let Some(shortlist) = step_store.get::<hanzo_loop::Shortlist>() {
+        let search = model_info.supports_search_tool;
+        for tool in registry.entries_mut() {
+            let name = tool.runtime.tool_name();
+            if !registered_mcp_tools.contains(&name) || shortlist.keeps(&name.to_string()) {
+                continue;
+            }
+            tool.exposure = match (tool.exposure, search) {
+                (ToolExposure::Direct, true) => ToolExposure::Deferred,
+                (ToolExposure::DirectModelOnly, true) => ToolExposure::DeferredModelOnly,
+                (exposure, _) if exposure.is_direct() => ToolExposure::Hidden,
+                (exposure, _) => exposure,
+            };
+        }
+    }
     let standalone_web_search_tool = append_extension_tool_executors(
         turn_context,
         model_info,

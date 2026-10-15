@@ -125,6 +125,11 @@ pub async fn fetch_remote_featured_plugin_ids(
     auth: Option<&CodexAuth>,
     product: Option<Product>,
 ) -> Result<Vec<String>, RemotePluginFetchError> {
+    // Featured plugins are served to a ChatGPT sign-in only; any other caller is
+    // refused, so it is not asked.
+    let Some(auth) = auth.filter(|auth| auth.uses_codex_backend()) else {
+        return Ok(Vec::new());
+    };
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
     let mut url = Url::parse(&format!("{base_url}/plugins/featured"))
         .map_err(RemotePluginFetchError::InvalidBaseUrl)?;
@@ -137,10 +142,7 @@ pub async fn fetch_remote_featured_plugin_ids(
         .http_request(Method::GET, &url)
         .timeout(REMOTE_FEATURED_PLUGIN_FETCH_TIMEOUT);
 
-    if let Some(auth) = auth.filter(|auth| auth.uses_codex_backend()) {
-        request =
-            request.headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
-    }
+    request = request.headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()

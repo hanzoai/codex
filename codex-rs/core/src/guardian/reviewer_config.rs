@@ -90,7 +90,7 @@ pub(crate) async fn resolve_review_model(
     Arc<codex_protocol::openai_models::ModelInfo>,
 ) {
     let turn = context.turn();
-    let available_models = session
+    let mut available_models = session
         .services
         .models_manager
         .list_models(
@@ -98,6 +98,11 @@ pub(crate) async fn resolve_review_model(
             turn.config.http_client_factory(),
         )
         .await;
+    // Hanzo: off OpenAI a provider serves the models its catalog lists. The bundled
+    // OpenAI entries ride along unlisted, for lookups, and no other provider serves them.
+    if !turn.provider.info().is_openai() {
+        available_models.retain(|preset| preset.show_in_picker);
+    }
     let default_review_model_id = turn.provider.approval_review_preferred_model();
     let review_model = codex_guardian_reviewer::select_review_model(
         &context.model_info,
