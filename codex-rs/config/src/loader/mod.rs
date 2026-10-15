@@ -77,7 +77,7 @@ pub use windows::WindowsSystemConfigNamespaceProbe;
 pub use windows::probe_windows_system_config_namespace;
 
 #[cfg(unix)]
-const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = "/etc/codex/config.toml";
+const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = "/etc/hanzo/dev/config.toml";
 
 #[cfg(windows)]
 const DEFAULT_PROGRAM_DATA_DIR_WINDOWS: &str = r"C:\ProgramData";
@@ -728,7 +728,7 @@ pub async fn load_requirements_toml(
 
 #[cfg(unix)]
 fn system_requirements_toml_file() -> io::Result<AbsolutePathBuf> {
-    AbsolutePathBuf::from_absolute_path(Path::new("/etc/codex/requirements.toml"))
+    AbsolutePathBuf::from_absolute_path(Path::new("/etc/hanzo/dev/requirements.toml"))
 }
 
 #[cfg(windows)]
@@ -809,7 +809,7 @@ fn windows_codex_system_dir() -> PathBuf {
         );
         PathBuf::from(DEFAULT_PROGRAM_DATA_DIR_WINDOWS)
     });
-    program_data.join("OpenAI").join("Codex")
+    program_data.join("Hanzo").join("Dev")
 }
 
 #[cfg(windows)]
@@ -1139,7 +1139,12 @@ impl ProjectTrustContext {
         }
 
         let relative_dir = dir.as_path().strip_prefix(checkout_root.as_path()).ok()?;
-        Some(repo_root.join(relative_dir).join(".codex"))
+        Some(
+            repo_root
+                .join(relative_dir)
+                .join(codex_protocol::permissions::PROJECT_DIR)
+                .join("dev"),
+        )
     }
 }
 
@@ -1703,7 +1708,7 @@ async fn discover_project_layers(
     let mut layers = Vec::new();
     let mut startup_warnings = Vec::new();
     for dir in dirs {
-        let dot_codex_abs = dir.join(".codex");
+        let dot_codex_abs = dir.join(codex_protocol::permissions::PROJECT_DIR).join("dev");
         let dot_codex_uri = PathUri::from_abs_path(&dot_codex_abs);
         if !fs
             .get_metadata(&dot_codex_uri, Default::default(), /*sandbox*/ None)

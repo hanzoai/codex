@@ -39,7 +39,10 @@ pub use windows_glob::windows_deny_read_glob_scan;
 
 const PROTECTED_METADATA_GIT_PATH_NAME: &str = ".git";
 const PROTECTED_METADATA_AGENTS_PATH_NAME: &str = ".agents";
-const PROTECTED_METADATA_CODEX_PATH_NAME: &str = ".codex";
+/// The directory a project keeps Hanzo's settings in; Dev's own are under `dev/` in it,
+/// the same layout as `~/.hanzo/dev`. Another product's directory is not Dev's to read.
+pub const PROJECT_DIR: &str = ".hanzo";
+const PROTECTED_METADATA_CODEX_PATH_NAME: &str = PROJECT_DIR;
 const PROTECTED_METADATA_AWS_PATH_NAME: &str = ".aws";
 
 /// Top-level workspace metadata paths that stay protected under writable roots.
@@ -859,7 +862,7 @@ impl FileSystemSandboxPolicy {
 
         append_default_read_only_project_root_subpath_if_no_explicit_rule(&mut entries, ".git");
         append_default_read_only_project_root_subpath_if_no_explicit_rule(&mut entries, ".agents");
-        append_default_read_only_project_root_subpath_if_no_explicit_rule(&mut entries, ".codex");
+        append_default_read_only_project_root_subpath_if_no_explicit_rule(&mut entries, PROJECT_DIR);
         append_default_read_only_project_root_subpath_if_no_explicit_rule(&mut entries, ".aws");
         for writable_root in writable_roots {
             for protected_path in default_read_only_subpaths_for_writable_root(
