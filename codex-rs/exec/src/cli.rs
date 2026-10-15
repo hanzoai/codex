@@ -10,14 +10,14 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(
     version,
-    override_usage = "codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]"
+    override_usage = "dev exec [OPTIONS] [PROMPT]\n       dev exec [OPTIONS] <COMMAND> [ARGS]"
 )]
 pub struct Cli {
     /// Action to perform. If omitted, runs a new non-interactive session.
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Error out when config.toml contains fields that are not recognized by this version of Codex.
+    /// Error out when config.toml contains fields this version of Dev does not recognize.
     #[arg(long = "strict-config", global = true, default_value_t = false)]
     pub strict_config: bool,
 
@@ -28,12 +28,12 @@ pub struct Cli {
     #[arg(long = "thread-source", value_name = "SOURCE", global = true)]
     pub thread_source: Option<ThreadSource>,
 
-    /// Request an experimental Cyber access program for this turn (OpenAI provider only).
+    /// Request an experimental Cyber access program for this turn (supported providers only).
     /// Omit to use server defaults. Not supported with review; fork requires a prompt.
     #[arg(long, value_enum, value_name = "PROGRAM", global = true)]
     pub cyber_access_program: Option<CyberAccessProgramCliArg>,
 
-    /// Allow running Codex outside a Git repository.
+    /// Allow running Dev outside a Git repository.
     #[arg(long = "skip-git-repo-check", global = true, default_value_t = false)]
     pub skip_git_repo_check: bool,
 
@@ -41,7 +41,7 @@ pub struct Cli {
     #[arg(long = "ephemeral", global = true, default_value_t = false)]
     pub ephemeral: bool,
 
-    /// Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`.
+    /// Do not load `$DEV_HOME/config.toml`; auth still uses `DEV_HOME`.
     #[arg(long = "ignore-user-config", global = true, default_value_t = false)]
     pub ignore_user_config: bool,
 

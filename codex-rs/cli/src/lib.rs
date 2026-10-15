@@ -1,6 +1,22 @@
+#![allow(dead_code)]
 pub(crate) mod debug_sandbox;
 mod exit_status;
 pub(crate) mod login;
+// Upstream declares these in its binary, which puts them out of reach of
+// any other front end. They are self-contained; publishing them from the
+// library is the whole of the change.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub mod app_cmd;
+pub mod cloud_config;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub mod desktop_app;
+pub mod doctor;
+pub mod marketplace_cmd;
+pub mod mcp_cmd;
+pub mod mcp_login;
+pub mod migrate_rollouts;
+pub mod plugin_cmd;
+pub mod remote_control_cmd;
 
 use clap::Args;
 use clap::Parser;
@@ -24,7 +40,7 @@ pub use login::run_logout;
 
 #[derive(Debug, Default, Args)]
 pub struct SandboxStateArgs {
-    /// Opaque JSON value from `codex/sandbox-state` to apply directly.
+    /// Opaque JSON value from the MCP sandbox state capability to apply directly.
     #[arg(
         long = "sandbox-state-json",
         value_name = "JSON",
@@ -61,7 +77,7 @@ pub struct SeatbeltCommand {
     )]
     pub permissions_profile: Option<String>,
 
-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
+    /// Layer $DEV_HOME/<name>.config.toml on top of the base user config.
     #[arg(long = "profile", short = 'p')]
     pub config_profile: Option<ProfileV2Name>,
 
@@ -117,7 +133,7 @@ pub struct LandlockCommand {
     )]
     pub permissions_profile: Option<String>,
 
-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
+    /// Layer $DEV_HOME/<name>.config.toml on top of the base user config.
     #[arg(long = "profile", short = 'p')]
     pub config_profile: Option<ProfileV2Name>,
 
@@ -160,7 +176,7 @@ pub struct WindowsCommand {
     )]
     pub permissions_profile: Option<String>,
 
-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
+    /// Layer $DEV_HOME/<name>.config.toml on top of the base user config.
     #[arg(long = "profile", short = 'p')]
     pub config_profile: Option<ProfileV2Name>,
 

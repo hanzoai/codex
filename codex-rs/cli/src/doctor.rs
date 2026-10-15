@@ -205,6 +205,7 @@ struct DoctorReport {
     schema_version: u32,
     generated_at: String,
     overall_status: CheckStatus,
+    #[serde(rename = "devVersion")]
     codex_version: String,
     checks: Vec<DoctorCheck>,
 }
@@ -532,7 +533,7 @@ async fn build_report(
                             CheckStatus::Fail,
                             "config could not be loaded",
                         )
-                        .remediation("Fix the reported config error, then rerun codex doctor.");
+                        .remediation("Fix the reported config error, then rerun dev doctor.");
                         // Error messages can echo config values. Report only typed metadata,
                         // including errors wrapped by io::Error, whose source skips the wrapper.
                         let config_error = err.chain().find_map(|cause| {
@@ -682,6 +683,7 @@ struct JsonDoctorReport {
     schema_version: u32,
     generated_at: String,
     overall_status: CheckStatus,
+    #[serde(rename = "devVersion")]
     codex_version: String,
     checks: BTreeMap<String, JsonDoctorCheck>,
 }
@@ -1105,7 +1107,7 @@ fn config_check(config: &Config) -> DoctorCheck {
     details
         .push("configuration scope: invocation config, including cloud-managed policy".to_string());
     details.push("active thread overrides: not inspected".to_string());
-    details.push(format!("CODEX_HOME: {}", config.codex_home.display()));
+    details.push(format!("DEV_HOME: {}", config.codex_home.display()));
     details.push(format!("cwd: {}", config.cwd.display()));
     details.push(format!(
         "model: {}",
@@ -2101,7 +2103,7 @@ fn terminal_size_issues(inputs: &TerminalCheckInputs) -> Vec<DoctorIssue> {
 
 async fn state_check(config: &Config, command: &DoctorCommand) -> DoctorCheck {
     let mut details = Vec::new();
-    path_readiness(&mut details, "CODEX_HOME", &config.codex_home);
+    path_readiness(&mut details, "DEV_HOME", &config.codex_home);
     path_readiness(&mut details, "log dir", &config.log_dir);
     path_readiness(&mut details, "sqlite home", config.sqlite_config().home());
 
@@ -2503,14 +2505,14 @@ fn fallback_state_check() -> DoctorCheck {
             "state.paths",
             "state",
             CheckStatus::Ok,
-            "CODEX_HOME was resolved without config",
+            "DEV_HOME was resolved without config",
         )
-        .detail(format!("CODEX_HOME: {}", path.display())),
+        .detail(format!("DEV_HOME: {}", path.display())),
         Err(err) => DoctorCheck::new(
             "state.paths",
             "state",
             CheckStatus::Warning,
-            "CODEX_HOME could not be resolved",
+            "DEV_HOME could not be resolved",
         )
         .detail(err.to_string()),
     }
