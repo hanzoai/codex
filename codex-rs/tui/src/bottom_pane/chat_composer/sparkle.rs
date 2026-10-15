@@ -84,10 +84,9 @@ impl Default for Sparkle {
 }
 
 impl BottomPane {
-    pub(crate) fn is_sparkle_model(model: &str) -> bool {
-        model
-            .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
-            .any(|part| part.eq_ignore_ascii_case("astra"))
+    pub(crate) fn is_sparkle_model(_model: &str) -> bool {
+        // Hanzo: the input stays plain; no starfield for any model.
+        false
     }
 
     pub(crate) fn mark_fresh_task_for_sparkle(&mut self, model: &str, settings: &Tui) {

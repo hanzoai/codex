@@ -475,6 +475,9 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
     }
     let mut restore_guard = TerminalInitializationGuard { active: true };
     set_modes()?;
+    if hanzo_tui::MONOCHROME {
+        crossterm::style::force_color_output(false);
+    }
 
     set_panic_hook();
 

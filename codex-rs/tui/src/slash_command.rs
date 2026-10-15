@@ -69,6 +69,8 @@ pub enum SlashCommand {
     Apps,
     Plugins,
     Logout,
+    Login,
+    Auth,
     Quit,
     Exit,
     Feedback,
@@ -154,7 +156,9 @@ impl SlashCommand {
             SlashCommand::Mcp => "list MCP tools; use /mcp verbose or /mcp login <name>",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
-            SlashCommand::Logout => "log out of Codex",
+            SlashCommand::Logout => "sign out of Hanzo",
+            SlashCommand::Login => "sign in to Hanzo",
+            SlashCommand::Auth => "show who is signed in",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
         }
@@ -170,7 +174,8 @@ impl SlashCommand {
     pub fn supports_inline_args(self) -> bool {
         matches!(
             self,
-            SlashCommand::Review
+            SlashCommand::Model
+                | SlashCommand::Review
                 | SlashCommand::Rename
                 | SlashCommand::New
                 | SlashCommand::Clear
@@ -262,6 +267,7 @@ impl SlashCommand {
             | SlashCommand::Cd
             | SlashCommand::Clear
             | SlashCommand::Logout
+            | SlashCommand::Login
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
@@ -277,6 +283,7 @@ impl SlashCommand {
             | SlashCommand::Skills
             | SlashCommand::Hooks
             | SlashCommand::Status
+            | SlashCommand::Auth
             | SlashCommand::Daemon
             | SlashCommand::Warnings
             | SlashCommand::Pwd

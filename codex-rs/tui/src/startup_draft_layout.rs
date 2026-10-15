@@ -33,7 +33,7 @@ impl<'a> OwnedStartupLayout<'a> {
             bottom: pump
                 .bottom_pane
                 .as_renderable_with_options(ComposerRenderOptions {
-                    separate_status_line: true,
+                    separate_status_line: hanzo_tui::SEPARATE_STATUS_LINE,
                     command_popup_placement: CommandPopupPlacement::Overlay,
                     ..ComposerRenderOptions::default()
                 }),

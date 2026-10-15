@@ -47,6 +47,9 @@ lazy_static! {
 
 /// Pick a random tooltip to show to the user when starting Codex.
 pub(crate) fn get_tooltip(plan: Option<PlanType>, keymap: &TuiKeymap) -> Option<String> {
+    if plan.is_none() {
+        return Some(hanzo_tui::STARTUP_TIP.to_string());
+    }
     let mut rng = rand::rng();
     preferred_tooltip(&mut rng, plan).or_else(|| pick_tooltip(&mut rng, keymap))
 }

@@ -256,12 +256,7 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
 }
 
 pub(crate) fn user_message_bg_rgb(terminal_bg: (u8, u8, u8)) -> (u8, u8, u8) {
-    let (top, alpha) = if is_light(terminal_bg) {
-        ((0, 0, 0), 0.04)
-    } else {
-        ((255, 255, 255), 0.12)
-    };
-    blend(top, terminal_bg, alpha)
+    hanzo_tui::input_background(terminal_bg, is_light(terminal_bg))
 }
 
 #[allow(clippy::disallowed_methods)]

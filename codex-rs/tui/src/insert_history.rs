@@ -403,7 +403,8 @@ where
         }
         let next_fg = span.style.fg.unwrap_or(Color::Reset);
         let next_bg = span.style.bg.unwrap_or(Color::Reset);
-        if next_fg != fg || next_bg != bg {
+        // A disabled color writes an empty SGR, which would also drop the span's weight.
+        if (next_fg != fg || next_bg != bg) && !crossterm::style::Colored::ansi_color_disabled_memoized() {
             queue!(
                 writer,
                 SetColors(Colors::new(

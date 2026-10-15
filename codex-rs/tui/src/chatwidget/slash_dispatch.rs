@@ -492,6 +492,18 @@ impl ChatWidget {
             SlashCommand::Logout => {
                 self.app_event_tx.send(AppEvent::Logout);
             }
+            SlashCommand::Login => {
+                // Hanzo: sign in through the Hanzo CLI, with its output shown here.
+                let tx = self.app_event_tx.clone();
+                hanzo_tui::account::login(move |line| {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        crate::history_cell::new_info_event(line, /*hint*/ None),
+                    )));
+                });
+            }
+            SlashCommand::Auth => {
+                hanzo_tui::account::show(|line| self.add_info_message(line, /*hint*/ None));
+            }
             SlashCommand::Copy => {
                 self.show_copy_picker();
             }
@@ -545,6 +557,8 @@ impl ChatWidget {
             SlashCommand::Daemon => self.app_event_tx.send(AppEvent::OpenDaemonMenu),
             SlashCommand::Warnings => self.app_event_tx.send(AppEvent::OpenWarnings),
             SlashCommand::Status => {
+                // Hanzo: who the session runs as, ahead of the card.
+                hanzo_tui::account::show(|line| self.add_info_message(line, /*hint*/ None));
                 if self.should_prefetch_rate_limits() {
                     let request_id = self.next_status_refresh_request_id;
                     self.next_status_refresh_request_id =
@@ -891,6 +905,32 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
+            SlashCommand::Model if !trimmed.is_empty() => {
+                // Hanzo: `/model <name>` switches this session directly.
+                let offered: Vec<String> = self
+                    .model_catalog
+                    .try_list_models()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|preset| preset.model)
+                    .collect();
+                match hanzo_tui::model::pick(trimmed, &offered) {
+                    hanzo_tui::model::Pick::One(model) => {
+                        self.add_info_message(format!("Model set to {model}."), /*hint*/ None);
+                        self.app_event_tx.send(AppEvent::SelectSessionModel {
+                            model,
+                            effort: None,
+                        });
+                    }
+                    hanzo_tui::model::Pick::Many(names) => self.add_error_message(format!(
+                        "`{trimmed}` fits {}. Name one of them.",
+                        names.join(", ")
+                    )),
+                    hanzo_tui::model::Pick::None => self.add_error_message(format!(
+                        "No model matches `{trimmed}`. Use /model to see the list."
+                    )),
+                }
+            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -1329,6 +1369,8 @@ impl ChatWidget {
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Logout
+            | SlashCommand::Login
+            | SlashCommand::Auth
             | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Import
