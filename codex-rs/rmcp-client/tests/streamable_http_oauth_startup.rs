@@ -55,7 +55,8 @@ const REFRESH_TOKEN: &str = "valid-refresh-token";
 const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
 const RESOURCE_API_KEY: &str = "resource-api-key-secret";
 const RESOURCE_USER_AGENT: &str = "resource-only-user-agent";
-const MCP_USER_AGENT: &str = concat!("codex-mcp-client/", hanzo::version::get());
+static MCP_USER_AGENT: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("codex-mcp-client/{}", hanzo::version::get()));
 const CHILD_SERVER_URL_ENV: &str = "MCP_TEST_OAUTH_STARTUP_SERVER_URL";
 const CLIENT_SECRET: &str = "configured-client-secret";
 const CHILD_CONFIDENTIAL_CLIENT_ID_ENV: &str = "MCP_TEST_OAUTH_CONFIDENTIAL_CLIENT_ID";
@@ -454,7 +455,7 @@ async fn assert_expired_token_refresh(
             if same_origin_gateway {
                 RESOURCE_USER_AGENT
             } else {
-                MCP_USER_AGENT
+                MCP_USER_AGENT.as_str()
             },
         ))
         .and(body_string_contains("grant_type=refresh_token"))

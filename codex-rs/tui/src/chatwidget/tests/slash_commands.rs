@@ -1858,7 +1858,7 @@ async fn slash_copy_picker_copies_status_fields_and_preserves_source_after_copyi
         "slash_copy_picker_status_fields",
         render_bottom_popup(&chat, /*width*/ 100)
             .replace(&directory, "[[workspace]]")
-            .replace(crate::version::CODEX_CLI_VERSION, "VERSION"),
+            .replace(hanzo::version::get(), "VERSION"),
     );
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let (whole_status, label) = next_copy_selection(&mut rx);
@@ -1867,7 +1867,7 @@ async fn slash_copy_picker_copies_status_fields_and_preserves_source_after_copyi
         "slash_copy_whole_status",
         whole_status
             .replace(&directory, "[[workspace]]")
-            .replace(crate::version::CODEX_CLI_VERSION, "VERSION"),
+            .replace(hanzo::version::get(), "VERSION"),
     );
     let expected = [
         ("Whole status", whole_status.as_str()),

@@ -538,7 +538,7 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_metadata_from_env() {
     assert!(output.status.success(), "command failed: {output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        concat!("nested-thread|nested-call|", hanzo::version::get()),
+        format!("nested-thread|nested-call|{}", hanzo::version::get()),
     );
 }
 
