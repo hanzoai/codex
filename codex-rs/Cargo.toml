@@ -319,6 +319,13 @@ codex-windows-sandbox = { path = "windows-sandbox-rs" }
 codex-windows-sandbox-test-support = { path = "windows-sandbox-rs/tests/support" }
 core_test_support = { path = "core/tests/common" }
 
+# Hanzo Dev's own crates. This repository is hanzoai/dev's upstream/codex
+# submodule, and these paths are that checkout's: crates/ beside upstream/.
+hanzo-config = { path = "../../../crates/hanzo-config" }
+hanzo-kai = { path = "../../../crates/hanzo-kai" }
+hanzo-loop = { path = "../../../crates/hanzo-loop" }
+hanzo-tui = { path = "../../../crates/hanzo-tui" }
+
 # External
 learning_mode_windows = { git = "https://github.com/microsoft/mxc", rev = "6cd3d58f05d3447e67109cfb75e042803b843ca4" }
 wxc_common = { git = "https://github.com/microsoft/mxc", rev = "6cd3d58f05d3447e67109cfb75e042803b843ca4" }
