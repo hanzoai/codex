@@ -323,7 +323,6 @@ hanzo = { path = "hanzo" }
 
 # Hanzo Dev's own crates. This repository is hanzoai/dev's upstream/codex
 # submodule, and these paths are that checkout's: crates/ beside upstream/.
-hanzo-kai = { path = "../../../crates/hanzo-kai" }
 hanzo-tui = { path = "../../../crates/hanzo-tui" }
 
 # External

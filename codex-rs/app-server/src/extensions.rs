@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::sync::Weak;
 use std::time::Duration;
 
@@ -30,6 +32,29 @@ use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadStateManager;
+
+/// An extension a binary adds to every thread, beside upstream's own: given the
+/// thread's registry builder and the thread manager, it installs what it contributes.
+pub type Extension = fn(&mut ExtensionRegistryBuilder<Config>, Weak<ThreadManager>);
+
+static EXTENSIONS: Mutex<Vec<Extension>> = Mutex::new(Vec::new());
+
+/// Add `extension` to every thread this process starts from now on. A binary calls
+/// this before it starts the app server; with nothing registered, a thread carries
+/// upstream's extensions alone.
+pub fn register(extension: Extension) {
+    EXTENSIONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(extension);
+}
+
+fn registered() -> Vec<Extension> {
+    EXTENSIONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
 
 pub(crate) struct ThreadExtensionDependencies {
     pub(crate) event_sink: Arc<dyn ExtensionEventSink>,
@@ -93,8 +118,9 @@ pub(crate) fn thread_extensions(
         git_attribution_base_url,
         http_client_factory,
     );
-    // Hanzo: Kai decides in the loop; it runs only for a profile with a kai.toml.
-    hanzo_kai::install(&mut builder, thread_manager.clone());
+    for extension in registered() {
+        extension(&mut builder, thread_manager.clone());
+    }
     codex_guardian_v2::install(&mut builder, auth_manager.clone(), thread_manager);
     codex_memories_extension::install(&mut builder, codex_otel::global());
     codex_mcp_extension::install(&mut builder);
