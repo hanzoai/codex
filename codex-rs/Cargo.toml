@@ -10,6 +10,7 @@ members = [
     "cloud-client",
     "bwrap",
     "build-info",
+    "hanzo-version",
     "ansi-escape",
     "attachment-store",
     "async-utils",
@@ -318,6 +319,7 @@ codex-workload-identity = { path = "workload-identity" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
 codex-windows-sandbox-test-support = { path = "windows-sandbox-rs/tests/support" }
 core_test_support = { path = "core/tests/common" }
+hanzo-version = { path = "hanzo-version" }
 
 # Hanzo Dev's own crates. This repository is hanzoai/dev's upstream/codex
 # submodule, and these paths are that checkout's: crates/ beside upstream/.

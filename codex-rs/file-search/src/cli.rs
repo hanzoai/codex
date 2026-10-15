@@ -6,7 +6,7 @@ use clap::Parser;
 
 /// Fuzzy matches filenames under a directory.
 #[derive(Parser)]
-#[command(version)]
+#[command(version = hanzo_version::get())]
 pub struct Cli {
     /// Whether to output results in JSON format.
     #[clap(long, default_value = "false")]

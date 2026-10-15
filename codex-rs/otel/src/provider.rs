@@ -732,7 +732,7 @@ mod tests {
             crate::metrics::install_global(MetricsClient::new(MetricsConfig::in_memory(
                 "test",
                 "codex-test",
-                env!("CARGO_PKG_VERSION"),
+                hanzo_version::get(),
                 InMemoryMetricExporter::default(),
             ))?);
         crate::metrics::install_global_statsig_settings(StatsigMetricsSettings {
@@ -752,7 +752,7 @@ mod tests {
             MetricsConfig::in_memory(
                 "test",
                 "codex-test",
-                env!("CARGO_PKG_VERSION"),
+                hanzo_version::get(),
                 exporter.clone(),
             )
             .with_http_client_factory(
@@ -785,7 +785,7 @@ mod tests {
         let mut config = MetricsConfig::otlp(
             "test",
             "codex-cli",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             OtelExporter::Statsig,
         );
         config.exporter = MetricsExporter::InMemory(exporter.clone());

@@ -25,6 +25,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["fs", "sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
+hanzo-version = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

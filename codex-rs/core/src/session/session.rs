@@ -1356,7 +1356,7 @@ impl Session {
             }
             let network_proxy_audit_metadata = NetworkProxyAuditMetadata {
                 conversation_id: Some(thread_id.to_string()),
-                app_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                app_version: Some(hanzo_version::get().to_string()),
                 user_account_id: account_id,
                 auth_mode: auth_mode.map(|mode| mode.to_string()),
                 originator: Some(originator),

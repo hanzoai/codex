@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
-    version,
+    version = hanzo_version::get(),
     override_usage = "dev exec [OPTIONS] [PROMPT]\n       dev exec [OPTIONS] <COMMAND> [ARGS]"
 )]
 pub struct Cli {

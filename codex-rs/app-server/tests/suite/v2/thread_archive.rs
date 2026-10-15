@@ -391,7 +391,7 @@ async fn thread_archive_without_turns(history_mode: ThreadHistoryMode) -> Result
                     "experimental_api_enabled": true,
                 },
                 "runtime": {
-                    "codex_rs_version": env!("CARGO_PKG_VERSION"),
+                    "codex_rs_version": hanzo_version::get(),
                     "runtime_os": std::env::consts::OS,
                     "runtime_os_version": event["event_params"]["runtime"]["runtime_os_version"],
                     "runtime_arch": std::env::consts::ARCH,

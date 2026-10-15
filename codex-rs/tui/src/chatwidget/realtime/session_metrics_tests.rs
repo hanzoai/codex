@@ -50,7 +50,7 @@ async fn completed_voice_duration_uses_terminal_success_or_failure_outcome() {
             MetricsConfig::in_memory(
                 "test",
                 "codex-cli",
-                env!("CARGO_PKG_VERSION"),
+                hanzo_version::get(),
                 InMemoryMetricExporter::default(),
             )
             .with_runtime_reader(),

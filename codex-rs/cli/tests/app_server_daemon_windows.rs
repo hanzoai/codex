@@ -35,7 +35,7 @@ fn winget_package_starts_and_reselects_daemon() -> Result<()> {
         std::fs::write(package.join(helper), b"runtime fixture")?;
     }
     let mut metadata = serde_json::json!({
-        "layoutVersion": 1, "version": env!("CARGO_PKG_VERSION"),
+        "layoutVersion": 1, "version": hanzo_version::get(),
         "target": target, "entrypoint": entrypoint
     });
     let manifest_bytes = serde_json::to_vec(&metadata)?;

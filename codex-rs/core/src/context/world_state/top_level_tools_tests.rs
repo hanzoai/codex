@@ -88,7 +88,7 @@ async fn snapshots_namespace_transitions() {
         MetricsConfig::in_memory(
             "test",
             "tool-updates",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

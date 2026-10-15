@@ -57,7 +57,7 @@ impl SessionTask for PendingTask {
 fn test_session_telemetry() -> SessionTelemetry {
     let exporter = InMemoryMetricExporter::default();
     let metrics = MetricsClient::new(
-        MetricsConfig::in_memory("test", "codex-core", env!("CARGO_PKG_VERSION"), exporter)
+        MetricsConfig::in_memory("test", "codex-core", hanzo_version::get(), exporter)
             .with_runtime_reader(),
     )
     .expect("in-memory metrics client");
@@ -131,7 +131,7 @@ async fn turn_completion_metrics_follow_model_switch(scenario: UsageScenario) {
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

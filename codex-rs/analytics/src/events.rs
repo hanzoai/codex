@@ -1519,7 +1519,7 @@ pub(crate) fn current_runtime_metadata() -> CodexRuntimeMetadata {
     static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);
     let os_info = &*OS_INFO;
     CodexRuntimeMetadata {
-        codex_rs_version: env!("CARGO_PKG_VERSION").to_string(),
+        codex_rs_version: hanzo_version::get().to_string(),
         runtime_os: std::env::consts::OS.to_string(),
         runtime_os_version: os_info.version().to_string(),
         runtime_arch: std::env::consts::ARCH.to_string(),

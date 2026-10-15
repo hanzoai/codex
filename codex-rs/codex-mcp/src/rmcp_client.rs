@@ -1129,7 +1129,7 @@ pub(crate) fn mcp_initialize_request_params(
     }
     InitializeRequestParams::new(
         capabilities,
-        Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION")).with_title("Dev"),
+        Implementation::new("codex-mcp-client", hanzo_version::get()).with_title("Dev"),
     )
     .with_protocol_version(ProtocolVersion::V_2025_06_18)
 }

@@ -1148,7 +1148,7 @@ mod tests {
             MetricsConfig::in_memory(
                 "test",
                 "codex-core",
-                env!("CARGO_PKG_VERSION"),
+                hanzo_version::get(),
                 InMemoryMetricExporter::default(),
             )
             .with_runtime_reader(),

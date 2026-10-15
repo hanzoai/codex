@@ -3,7 +3,7 @@ use clap::Parser;
 use codex_utils_cli::CliConfigOverrides;
 
 #[derive(Parser, Debug, Default)]
-#[command(version)]
+#[command(version = hanzo_version::get())]
 pub struct Cli {
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,

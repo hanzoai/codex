@@ -239,11 +239,11 @@ impl OAuthHttpClientAdapter {
         }
         let has_resource_only_headers = is_resource_origin
             && headers.iter().any(|(name, value)| {
-                name != USER_AGENT || value != HeaderValue::from_static(MCP_USER_AGENT)
+                name != USER_AGENT || value != HeaderValue::from_static(&MCP_USER_AGENT)
             });
         headers.extend(parts.headers);
         if !is_resource_origin {
-            headers.insert(USER_AGENT, HeaderValue::from_static(MCP_USER_AGENT));
+            headers.insert(USER_AGENT, HeaderValue::from_static(&MCP_USER_AGENT));
         }
         let redirect_policy = oauth_redirect_policy(
             self.redirect_mode,

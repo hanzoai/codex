@@ -412,7 +412,7 @@ async fn resource_headers_follow_same_origin_registration_redirect_and_sdk_auth_
         .await;
     Mock::given(method("GET"))
         .and(path("/.well-known/oauth-authorization-server"))
-        .and(header("user-agent", MCP_USER_AGENT))
+        .and(header("user-agent", MCP_USER_AGENT.as_str()))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "issuer": authorization_server.uri(),
             "authorization_endpoint": format!("{}/authorize", authorization_server.uri()),

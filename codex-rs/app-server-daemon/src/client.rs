@@ -110,7 +110,7 @@ where
             client_info: ClientInfo {
                 name: CLIENT_NAME.to_string(),
                 title: Some("Dev App Server Daemon".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
+                version: hanzo_version::get().to_string(),
             },
             capabilities: if experimental_api {
                 Some(InitializeCapabilities {

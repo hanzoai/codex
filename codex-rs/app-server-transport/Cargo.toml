@@ -53,6 +53,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v7"] }
+hanzo-version = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

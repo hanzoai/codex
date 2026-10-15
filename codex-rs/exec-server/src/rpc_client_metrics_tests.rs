@@ -40,7 +40,7 @@ impl Harness {
             MetricsConfig::in_memory(
                 "test",
                 "exec-server-client-test",
-                env!("CARGO_PKG_VERSION"),
+                hanzo_version::get(),
                 InMemoryMetricExporter::default(),
             )
             .with_runtime_reader(),

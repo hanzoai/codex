@@ -273,7 +273,7 @@ pub(super) async fn discover_ema_resource(request: EmaDiscoveryRequest<'_>) -> R
                 .extensions
                 .insert(RequestMetaObject::with_client_context(
                     ProtocolVersion::V_2026_07_28,
-                    Implementation::new("codex", env!("CARGO_PKG_VERSION")),
+                    Implementation::new("codex", hanzo_version::get()),
                     ClientCapabilities::builder()
                         .enable_extensions_with(
                             [(
@@ -332,7 +332,7 @@ pub(super) async fn discover_ema_resource(request: EmaDiscoveryRequest<'_>) -> R
                                 InitializeRequest::new(
                                     InitializeRequestParams::new(
                                         ClientCapabilities::default(),
-                                        Implementation::new("codex", env!("CARGO_PKG_VERSION")),
+                                        Implementation::new("codex", hanzo_version::get()),
                                     )
                                     .with_protocol_version(ProtocolVersion::V_2025_06_18),
                                 )

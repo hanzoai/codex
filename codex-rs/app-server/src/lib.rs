@@ -638,7 +638,7 @@ pub async fn run_main_with_transport_options(
 
     let otel = codex_core::otel_init::build_provider(
         &config,
-        env!("CARGO_PKG_VERSION"),
+        hanzo_version::get(),
         Some(OTEL_SERVICE_NAME),
         default_analytics_enabled,
     )

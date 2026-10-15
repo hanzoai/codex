@@ -844,7 +844,7 @@ async fn shadow_selection_uses_host_catalog_when_instructions_are_disabled() -> 
         MetricsConfig::in_memory(
             "test",
             "codex-skills-extension",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),
@@ -967,7 +967,7 @@ async fn shadow_lru_selector_recovers_a_skill_invoked_on_an_earlier_turn() -> Te
         MetricsConfig::in_memory(
             "test",
             "codex-skills-extension",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

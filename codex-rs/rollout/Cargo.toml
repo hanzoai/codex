@@ -50,6 +50,7 @@ tokio = { workspace = true, features = [
 tracing = { workspace = true }
 uuid = { workspace = true }
 zstd = { workspace = true }
+hanzo-version = { workspace = true }
 
 [dev-dependencies]
 codex-utils-absolute-path = { workspace = true }

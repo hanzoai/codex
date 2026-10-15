@@ -134,6 +134,7 @@ which = { workspace = true }
 whoami = { workspace = true }
 
 # Build OpenSSL from source for musl builds.
+hanzo-version = { workspace = true }
 [target.x86_64-unknown-linux-musl.dependencies]
 openssl-sys = { workspace = true, features = ["vendored"] }
 

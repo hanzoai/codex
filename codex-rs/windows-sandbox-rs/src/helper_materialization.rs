@@ -193,7 +193,7 @@ fn materialized_file_name(suffix: &str) -> String {
 }
 
 fn helper_version_suffix(source: &Path) -> Result<String> {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = hanzo_version::get();
     if version == DEV_BUILD_VERSION_SENTINEL {
         dev_build_suffix(source)
     } else {
@@ -416,10 +416,10 @@ mod tests {
         fs::write(&source, b"runner-v1").expect("write source");
         let suffix = helper_version_suffix(&source).expect("suffix");
 
-        if env!("CARGO_PKG_VERSION") == DEV_BUILD_VERSION_SENTINEL {
+        if hanzo_version::get() == DEV_BUILD_VERSION_SENTINEL {
             assert_eq!(suffix, dev_build_suffix(&source).expect("dev build suffix"));
         } else {
-            assert_eq!(suffix, env!("CARGO_PKG_VERSION"));
+            assert_eq!(suffix, hanzo_version::get());
         }
     }
 

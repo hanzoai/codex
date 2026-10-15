@@ -19,7 +19,7 @@ fn snapshot_collects_metrics_without_shutdown() -> Result<()> {
     let config = MetricsConfig::in_memory(
         "test",
         "codex-cli",
-        env!("CARGO_PKG_VERSION"),
+        hanzo_version::get(),
         exporter.clone(),
     )
     .with_tag("service", "codex-cli")?
@@ -65,7 +65,7 @@ fn snapshot_collects_metrics_without_shutdown() -> Result<()> {
 #[test]
 fn observable_gauge_is_collected_on_every_delta_snapshot() -> Result<()> {
     let exporter = InMemoryMetricExporter::default();
-    let config = MetricsConfig::in_memory("test", "codex-cli", env!("CARGO_PKG_VERSION"), exporter)
+    let config = MetricsConfig::in_memory("test", "codex-cli", hanzo_version::get(), exporter)
         .with_runtime_reader();
     let metrics = MetricsClient::new(config)?;
     metrics.register_observable_gauge_with_description(
@@ -97,7 +97,7 @@ fn observable_gauge_is_collected_on_every_delta_snapshot() -> Result<()> {
 #[test]
 fn manager_snapshot_metrics_collects_without_shutdown() -> Result<()> {
     let exporter = InMemoryMetricExporter::default();
-    let config = MetricsConfig::in_memory("test", "codex-cli", env!("CARGO_PKG_VERSION"), exporter)
+    let config = MetricsConfig::in_memory("test", "codex-cli", hanzo_version::get(), exporter)
         .with_tag("service", "codex-cli")?
         .with_runtime_reader();
     let metrics = MetricsClient::new(config)?;
@@ -138,7 +138,7 @@ fn manager_snapshot_metrics_collects_without_shutdown() -> Result<()> {
     let expected = BTreeMap::from([
         (
             "app.version".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
+            hanzo_version::get().to_string(),
         ),
         (
             "auth_mode".to_string(),
@@ -159,7 +159,7 @@ fn manager_snapshot_metrics_collects_without_shutdown() -> Result<()> {
 #[test]
 fn manager_turn_cost_records_microusd_metric() -> Result<()> {
     let exporter = InMemoryMetricExporter::default();
-    let config = MetricsConfig::in_memory("test", "codex-cli", env!("CARGO_PKG_VERSION"), exporter)
+    let config = MetricsConfig::in_memory("test", "codex-cli", hanzo_version::get(), exporter)
         .with_runtime_reader();
     let metrics = MetricsClient::new(config)?;
     let thread_id = ThreadId::new();
@@ -201,7 +201,7 @@ fn manager_turn_cost_records_microusd_metric() -> Result<()> {
         BTreeMap::from([
             (
                 "app.version".to_string(),
-                env!("CARGO_PKG_VERSION").to_string(),
+                hanzo_version::get().to_string(),
             ),
             (
                 "auth_mode".to_string(),

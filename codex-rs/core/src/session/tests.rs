@@ -453,7 +453,7 @@ fn extension_metrics_preserve_session_metadata_tags() {
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),
@@ -519,7 +519,7 @@ fn extension_metrics_preserve_session_metadata_tags() {
         BTreeMap::from([
             (
                 "app.version".to_string(),
-                env!("CARGO_PKG_VERSION").to_string(),
+                hanzo_version::get().to_string(),
             ),
             (
                 "auth_mode".to_string(),
@@ -560,7 +560,7 @@ async fn world_state_extension_metrics_follow_turn_model_switch() {
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

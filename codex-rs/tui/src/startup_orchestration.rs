@@ -643,7 +643,7 @@ pub(super) async fn run_main_inner(
     let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         codex_app_server_client::build_otel_provider(
             &config,
-            env!("CARGO_PKG_VERSION"),
+            hanzo_version::get(),
             /*service_name_override*/ None,
             /*default_analytics_enabled*/ true,
         )

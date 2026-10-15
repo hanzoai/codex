@@ -52,7 +52,7 @@ fn build_wfp_metrics_provider(
         ),
         environment: otel.environment.clone(),
         service_name: WFP_SETUP_SERVICE_NAME.to_string(),
-        service_version: env!("CARGO_PKG_VERSION").to_string(),
+        service_version: hanzo_version::get().to_string(),
         codex_home: codex_home.to_path_buf(),
         exporter: OtelExporter::None,
         trace_exporter: OtelExporter::None,

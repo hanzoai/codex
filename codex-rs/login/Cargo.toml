@@ -43,6 +43,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
 webbrowser = { workspace = true }
+hanzo-version = { workspace = true }
 
 [dev-dependencies]
 codex-utils-cargo-bin = { workspace = true }

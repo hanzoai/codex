@@ -23,6 +23,7 @@ tracing-subscriber = { workspace = true }
 tungstenite = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+hanzo-version = { workspace = true }
 
 [lib]
 doctest = false

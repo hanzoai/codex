@@ -36,6 +36,7 @@ tonic = { workspace = true, features = ["router", "transport"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+hanzo-version = { workspace = true }
 
 [dev-dependencies]
 codex-code-mode = { workspace = true }

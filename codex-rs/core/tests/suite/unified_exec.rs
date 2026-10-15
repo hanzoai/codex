@@ -620,7 +620,7 @@ async fn exec_command_uses_installed_environment_shell_policy_with_explicit_over
     let output = parse_unified_exec_output(&harness.function_call_stdout(call_id).await)?;
     assert_eq!(
         output.output.trim(),
-        concat!("preserved:missing:missing:", env!("CARGO_PKG_VERSION")),
+        concat!("preserved:missing:missing:", hanzo_version::get()),
     );
     Ok(())
 }

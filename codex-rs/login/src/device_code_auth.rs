@@ -147,7 +147,7 @@ async fn poll_for_token(
 }
 
 fn device_code_prompt(verification_url: &str, code: &str) -> String {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = hanzo_version::get();
     format!(
         "\nWelcome to Hanzo Dev [v{ANSI_GRAY}{version}{ANSI_RESET}]\n{ANSI_GRAY}your Hanzo coding agent{ANSI_RESET}\n\
 \nFollow these steps to sign in with ChatGPT using device code authorization:\n\

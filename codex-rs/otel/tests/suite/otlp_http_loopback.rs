@@ -207,7 +207,7 @@ fn otlp_http_exporter_honors_cumulative_temporality_env() -> Result<()> {
     let metrics = MetricsClient::new(MetricsConfig::otlp(
         "test",
         "codex-cli",
-        env!("CARGO_PKG_VERSION"),
+        hanzo_version::get(),
         OtelExporter::OtlpHttp {
             endpoint: format!("http://{addr}/v1/metrics"),
             headers: HashMap::new(),
@@ -400,7 +400,7 @@ fn otlp_http_exporter_sends_logs_to_collector()
         http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
         environment: "test".to_string(),
         service_name: "codex-cli".to_string(),
-        service_version: env!("CARGO_PKG_VERSION").to_string(),
+        service_version: hanzo_version::get().to_string(),
         codex_home: PathBuf::from("."),
         exporter: OtelExporter::OtlpHttp {
             endpoint: format!("http://{addr}/v1/logs"),
@@ -460,7 +460,7 @@ fn otel_provider_rejects_header_unsafe_configured_tracestate() {
         http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
         environment: "test".to_string(),
         service_name: "codex-cli".to_string(),
-        service_version: env!("CARGO_PKG_VERSION").to_string(),
+        service_version: hanzo_version::get().to_string(),
         codex_home: PathBuf::from("."),
         exporter: OtelExporter::None,
         trace_exporter: OtelExporter::OtlpHttp {
@@ -526,7 +526,7 @@ fn otlp_http_exporter_sends_traces_to_collector()
         http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
         environment: "test".to_string(),
         service_name: "codex-cli".to_string(),
-        service_version: env!("CARGO_PKG_VERSION").to_string(),
+        service_version: hanzo_version::get().to_string(),
         codex_home: PathBuf::from("."),
         exporter: OtelExporter::None,
         trace_exporter: OtelExporter::OtlpHttp {
@@ -672,7 +672,7 @@ async fn otlp_http_exporter_sends_traces_to_collector_with_bounded_shutdown_in_t
         http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
         environment: "test".to_string(),
         service_name: "codex-cli".to_string(),
-        service_version: env!("CARGO_PKG_VERSION").to_string(),
+        service_version: hanzo_version::get().to_string(),
         codex_home: PathBuf::from("."),
         exporter: OtelExporter::None,
         trace_exporter: OtelExporter::OtlpHttp {
@@ -766,7 +766,7 @@ fn otlp_http_exporter_times_out_when_collector_stalls_during_bounded_shutdown() 
             http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
             environment: "test".to_string(),
             service_name: "codex-cli".to_string(),
-            service_version: env!("CARGO_PKG_VERSION").to_string(),
+            service_version: hanzo_version::get().to_string(),
             codex_home: PathBuf::from("."),
             exporter: OtelExporter::None,
             trace_exporter: OtelExporter::OtlpHttp {
@@ -866,7 +866,7 @@ fn otlp_http_exporter_sends_traces_to_collector_in_current_thread_tokio_runtime(
                 http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
                 environment: "test".to_string(),
                 service_name: "codex-cli".to_string(),
-                service_version: env!("CARGO_PKG_VERSION").to_string(),
+                service_version: hanzo_version::get().to_string(),
                 codex_home: PathBuf::from("."),
                 exporter: OtelExporter::None,
                 trace_exporter: OtelExporter::OtlpHttp {

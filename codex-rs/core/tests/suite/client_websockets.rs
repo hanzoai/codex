@@ -2842,7 +2842,7 @@ async fn websocket_harness_with_provider_options_and_auth(
     });
     let exporter = InMemoryMetricExporter::default();
     let metrics = MetricsClient::new(
-        MetricsConfig::in_memory("test", "codex-core", env!("CARGO_PKG_VERSION"), exporter)
+        MetricsConfig::in_memory("test", "codex-core", hanzo_version::get(), exporter)
             .with_runtime_reader(),
     )
     .expect("in-memory metrics client");
