@@ -1055,8 +1055,10 @@ impl App {
                 }
             },
             AppEvent::Logout => match {
-                // Hanzo: the sign-in lives in the Hanzo CLI; sign out of it first.
-                hanzo_tui::account::logout(|line| self.chat_widget.add_info_message(line, /*hint*/ None));
+                // A registered account signs out first.
+                crate::account::logout(&mut |line| {
+                    self.chat_widget.add_info_message(line, /*hint*/ None)
+                });
                 app_server.logout_account().await
             } {
                 Ok(()) => {

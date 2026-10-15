@@ -493,16 +493,16 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::Logout);
             }
             SlashCommand::Login => {
-                // Hanzo: sign in through the Hanzo CLI, with its output shown here.
+                // Sign in through the registered account, its output shown here.
                 let tx = self.app_event_tx.clone();
-                hanzo_tui::account::login(move |line| {
+                crate::account::login(Box::new(move |line| {
                     tx.send(AppEvent::InsertHistoryCell(Box::new(
                         crate::history_cell::new_info_event(line, /*hint*/ None),
                     )));
-                });
+                }));
             }
             SlashCommand::Auth => {
-                hanzo_tui::account::show(|line| self.add_info_message(line, /*hint*/ None));
+                crate::account::show(&mut |line| self.add_info_message(line, /*hint*/ None));
             }
             SlashCommand::Copy => {
                 self.show_copy_picker();
@@ -557,8 +557,8 @@ impl ChatWidget {
             SlashCommand::Daemon => self.app_event_tx.send(AppEvent::OpenDaemonMenu),
             SlashCommand::Warnings => self.app_event_tx.send(AppEvent::OpenWarnings),
             SlashCommand::Status => {
-                // Hanzo: who the session runs as, ahead of the card.
-                hanzo_tui::account::show(|line| self.add_info_message(line, /*hint*/ None));
+                // Who a registered account says is signed in, ahead of the card.
+                crate::account::show(&mut |line| self.add_info_message(line, /*hint*/ None));
                 if self.should_prefetch_rate_limits() {
                     let request_id = self.next_status_refresh_request_id;
                     self.next_status_refresh_request_id =

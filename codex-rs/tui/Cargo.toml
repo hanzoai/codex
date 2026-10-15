@@ -22,7 +22,6 @@ doctest = false
 workspace = true
 
 [dependencies]
-hanzo-tui = { workspace = true }
 codex-build-info = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true, default-features = false, features = ["http1", "tokio"] }

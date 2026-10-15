@@ -104,6 +104,7 @@ pub(crate) use codex_app_server_client::legacy_core;
 
 pub(crate) use worktree_startup::ManagedTuiWorktree;
 
+mod account;
 mod activation_key_guard;
 mod additional_dirs;
 mod analytics;
@@ -282,6 +283,8 @@ use crate::startup_hooks_review::StartupHooksReviewOutcome;
 use crate::startup_hooks_review::load_startup_hooks_review_entry;
 use crate::startup_hooks_review::maybe_run_startup_hooks_review;
 use crate::tui::Tui;
+pub use account::Account;
+pub use account::register;
 pub use cli::Cli;
 use codex_arg0::Arg0DispatchPaths;
 pub use markdown_render::render_markdown_text;
