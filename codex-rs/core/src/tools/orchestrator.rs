@@ -170,14 +170,14 @@ impl ToolOrchestrator {
             .session
             .services
             .thread_extension_data
-            .get::<hanzo_loop::Handle>()
+            .get::<hanzo::controller::Handle>()
         {
             None => requirement,
             Some(handle) => {
                 let policy = match &requirement {
-                    ExecApprovalRequirement::Skip { .. } => hanzo_loop::Verdict::Allow,
-                    ExecApprovalRequirement::NeedsApproval { .. } => hanzo_loop::Verdict::Ask,
-                    ExecApprovalRequirement::Forbidden { .. } => hanzo_loop::Verdict::Deny,
+                    ExecApprovalRequirement::Skip { .. } => hanzo::controller::Verdict::Allow,
+                    ExecApprovalRequirement::NeedsApproval { .. } => hanzo::controller::Verdict::Ask,
+                    ExecApprovalRequirement::Forbidden { .. } => hanzo::controller::Verdict::Deny,
                 };
                 let action = tool
                     .approval_action(req, &tool_ctx.call_id)
@@ -187,7 +187,7 @@ impl ToolOrchestrator {
                 let turn = &tool_ctx.step_context.turn.sub_id;
                 match handle.command(turn, &tool_ctx.call_id, policy, action).await {
                     verdict if verdict == policy => requirement,
-                    hanzo_loop::Verdict::Deny => ExecApprovalRequirement::Forbidden {
+                    hanzo::controller::Verdict::Deny => ExecApprovalRequirement::Forbidden {
                         reason: "Kai refused this command.".to_string(),
                     },
                     _ => ExecApprovalRequirement::NeedsApproval {

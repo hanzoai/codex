@@ -80,7 +80,7 @@ async fn snapshot_failure_retries_are_bounded_and_single_flight(
         MetricsConfig::in_memory(
             "test",
             "codex-exec-server",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

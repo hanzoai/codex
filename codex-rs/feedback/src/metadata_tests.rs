@@ -65,7 +65,7 @@ fn dynamic_tags_survive_upload_alongside_static_fields() {
         ("classification".to_string(), "bug".to_string()),
         (
             "cli_version".to_string(),
-            hanzo_version::get().to_string(),
+            hanzo::version::get().to_string(),
         ),
     ]);
     assert_eq!(event.tags, expected);

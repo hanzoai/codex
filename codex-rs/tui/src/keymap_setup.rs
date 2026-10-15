@@ -829,7 +829,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: hanzo_tui::INPUT_PLACEHOLDER.to_string(),
+            placeholder_text: hanzo::INPUT_PLACEHOLDER.to_string(),
             disable_paste_burst: false,
             animations_enabled: false,
             effects: Default::default(),

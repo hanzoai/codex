@@ -88,7 +88,7 @@ async fn snapshots_namespace_transitions() {
         MetricsConfig::in_memory(
             "test",
             "tool-updates",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

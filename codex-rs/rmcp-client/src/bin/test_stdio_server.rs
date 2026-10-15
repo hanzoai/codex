@@ -542,7 +542,7 @@ impl ServerHandler for TestToolServer {
         let server_info = match dynamic_server_process_label() {
             Some(process_label) => server_info
                 .with_server_info(
-                    Implementation::new("codex-rmcp-test-server", hanzo_version::get())
+                    Implementation::new("codex-rmcp-test-server", hanzo::version::get())
                         .with_title(process_label.clone()),
                 )
                 .with_instructions(format!("Use the tools from {process_label}.")),

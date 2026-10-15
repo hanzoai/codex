@@ -2080,7 +2080,7 @@ impl Drop for ChatWidget {
     }
 }
 
-const PLACEHOLDER: &str = hanzo_tui::INPUT_PLACEHOLDER;
+const PLACEHOLDER: &str = hanzo::INPUT_PLACEHOLDER;
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 
 // Extract the first bold (Markdown) element in the form **...** from `s`.

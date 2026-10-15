@@ -50,7 +50,7 @@ async fn sampling_records_tool_registrations_once_across_stream_retry() -> Resul
         MetricsConfig::in_memory(
             "test",
             "tool-registrations",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

@@ -7,7 +7,7 @@ use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::SharedCliOptions;
 
 #[derive(Parser, Clone, Debug)]
-#[command(version = hanzo_version::get())]
+#[command(version = hanzo::version::get())]
 pub struct Cli {
     /// Internal: launching CLI that handles daemon updates after the TUI exits.
     #[clap(skip)]

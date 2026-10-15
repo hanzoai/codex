@@ -13,7 +13,7 @@ pub(super) async fn run_main_inner(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
-    if !hanzo_tui::BACKGROUND_SERVER && explicit_remote_endpoint.is_none() {
+    if !hanzo::BACKGROUND_SERVER && explicit_remote_endpoint.is_none() {
         cli.no_daemon = true;
     }
     if cli.no_daemon && explicit_remote_endpoint.is_some() {
@@ -643,7 +643,7 @@ pub(super) async fn run_main_inner(
     let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         codex_app_server_client::build_otel_provider(
             &config,
-            hanzo_version::get(),
+            hanzo::version::get(),
             /*service_name_override*/ None,
             /*default_analytics_enabled*/ true,
         )

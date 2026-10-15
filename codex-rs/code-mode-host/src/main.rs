@@ -95,7 +95,7 @@ fn build_trace_provider(endpoint: &str) -> anyhow::Result<OtelProvider> {
         ),
         environment: "code-mode-host".to_string(),
         service_name: "codex-code-mode-host".to_string(),
-        service_version: hanzo_version::get().to_string(),
+        service_version: hanzo::version::get().to_string(),
         codex_home: PathBuf::from("/tmp"),
         exporter: OtelExporter::None,
         trace_exporter: OtelExporter::OtlpHttp {

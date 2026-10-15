@@ -126,7 +126,7 @@ impl WidgetRef for &WelcomeWidget {
         lines.push(Line::from(vec![
             "  ".into(),
             "Welcome to ".into(),
-            hanzo_tui::PRODUCT_NAME.bold(),
+            hanzo::PRODUCT_NAME.bold(),
             ", your Hanzo coding agent".into(),
         ]));
 

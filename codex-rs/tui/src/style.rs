@@ -256,7 +256,7 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
 }
 
 pub(crate) fn user_message_bg_rgb(terminal_bg: (u8, u8, u8)) -> (u8, u8, u8) {
-    hanzo_tui::input_background(terminal_bg, is_light(terminal_bg))
+    hanzo::input_background(terminal_bg, is_light(terminal_bg))
 }
 
 #[allow(clippy::disallowed_methods)]

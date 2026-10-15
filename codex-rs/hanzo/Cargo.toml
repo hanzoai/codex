@@ -1,0 +1,22 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "hanzo"
+version.workspace = true
+description = "Hanzo Dev's names, defaults, model catalog, controller interface and version"
+
+[lib]
+doctest = false
+name = "hanzo"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# codex-core, codex-tui, models-manager and model-provider depend on this crate,
+# so it stays small and changes rarely: they rebuild whenever it does.
+[dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

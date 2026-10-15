@@ -6273,7 +6273,7 @@ async fn config_resolves_explicit_keyring_auth_store_mode() -> std::io::Result<(
         config.cli_auth_credentials_store_mode,
         resolve_cli_auth_credentials_store_mode(
             AuthCredentialsStoreMode::Keyring,
-            hanzo_version::get(),
+            hanzo::version::get(),
         ),
     );
 
@@ -6387,7 +6387,7 @@ async fn config_resolves_default_oauth_store_mode() -> std::io::Result<()> {
         config.mcp_oauth_credentials_store_mode,
         resolve_mcp_oauth_credentials_store_mode(
             OAuthCredentialsStoreMode::Auto,
-            hanzo_version::get(),
+            hanzo::version::get(),
         ),
     );
 
@@ -6884,7 +6884,7 @@ async fn managed_config_overrides_oauth_store_mode() -> anyhow::Result<()> {
         final_config.mcp_oauth_credentials_store_mode,
         resolve_mcp_oauth_credentials_store_mode(
             OAuthCredentialsStoreMode::Keyring,
-            hanzo_version::get(),
+            hanzo::version::get(),
         ),
     );
 

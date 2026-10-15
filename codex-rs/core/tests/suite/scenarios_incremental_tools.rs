@@ -65,7 +65,7 @@ async fn incremental_tools_append_changed_catalog_without_rewriting_history(
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

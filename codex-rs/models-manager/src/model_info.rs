@@ -96,7 +96,7 @@ fn is_h1_heading(line: &str) -> bool {
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
-    let known = hanzo_config::catalog::find(slug);
+    let known = hanzo::catalog::find(slug);
     if known.is_none() {
         warn!("Unknown model {slug} is used. This will use fallback model metadata.");
     }

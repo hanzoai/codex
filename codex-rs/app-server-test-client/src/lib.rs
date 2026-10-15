@@ -112,7 +112,7 @@ const TRACE_DISABLED_MESSAGE: &str =
 
 /// Minimal launcher that initializes the Codex app-server and logs the handshake.
 #[derive(Parser)]
-#[command(author = "Codex", version = hanzo_version::get(), about = "Bootstrap Codex app-server", long_about = None)]
+#[command(author = "Codex", version = hanzo::version::get(), about = "Bootstrap Codex app-server", long_about = None)]
 struct Cli {
     /// Path to the `codex` CLI binary. When set, requests use stdio by
     /// spawning `codex app-server` as a child process.
@@ -1604,7 +1604,7 @@ impl CodexClient {
                 client_info: ClientInfo {
                     name: "codex-toy-app-server".to_string(),
                     title: Some("Codex Toy App Server".to_string()),
-                    version: hanzo_version::get().to_string(),
+                    version: hanzo::version::get().to_string(),
                 },
                 capabilities: Some(InitializeCapabilities {
                     explicit_gateway_oauth: false,
@@ -2216,7 +2216,7 @@ impl TestClientTracing {
             .context("error loading config")?;
         let otel_provider = codex_core::otel_init::build_provider(
             &config,
-            hanzo_version::get(),
+            hanzo::version::get(),
             Some(OTEL_SERVICE_NAME),
             DEFAULT_ANALYTICS_ENABLED,
         )

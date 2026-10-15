@@ -25,7 +25,7 @@ async fn finalization_exports_loss_totals_only_for_accepted_input(window: i64) {
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

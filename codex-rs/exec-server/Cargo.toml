@@ -72,7 +72,7 @@ tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 codex-linux-sandbox = { workspace = true }

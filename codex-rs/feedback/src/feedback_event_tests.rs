@@ -51,7 +51,7 @@ fn custom_titles_preserve_comments_and_keep_submissions_separate() {
             ("classification".to_string(), "other".to_string()),
             (
                 "cli_version".to_string(),
-                hanzo_version::get().to_string(),
+                hanzo::version::get().to_string(),
             ),
         ]);
         if let Some(reason_tag) = reason_tag {
@@ -104,7 +104,7 @@ fn missing_or_blank_titles_preserve_session_titles_and_default_grouping() {
             ("classification".to_string(), "bug".to_string()),
             (
                 "cli_version".to_string(),
-                hanzo_version::get().to_string(),
+                hanzo::version::get().to_string(),
             ),
             (
                 "reason".to_string(),
@@ -169,7 +169,7 @@ fn reason_tag_previews_preserve_full_comments_in_the_exception() {
                     ("classification".to_string(), "bug".to_string()),
                     (
                         "cli_version".to_string(),
-                        hanzo_version::get().to_string()
+                        hanzo::version::get().to_string()
                     ),
                     ("reason".to_string(), preview),
                 ]),
@@ -235,7 +235,7 @@ async fn feedback_upload_sends_safe_reason_tag_and_full_comment() {
         ("classification".to_string(), "bug".to_string()),
         (
             "cli_version".to_string(),
-            hanzo_version::get().to_string(),
+            hanzo::version::get().to_string(),
         ),
         (
             "reason".to_string(),

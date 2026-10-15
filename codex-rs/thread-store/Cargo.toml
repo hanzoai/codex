@@ -35,7 +35,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 zstd = { workspace = true }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 [dev-dependencies]
 codex-utils-absolute-path = { workspace = true }

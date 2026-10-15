@@ -64,7 +64,7 @@ ts-rs = { workspace = true, features = [
     "no-serde-warnings",
 ] }
 uuid = { workspace = true }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 
 [dev-dependencies]

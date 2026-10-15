@@ -16,7 +16,7 @@ pub(crate) fn build_metrics_with_defaults(
     let mut config = MetricsConfig::in_memory(
         "test",
         "codex-cli",
-        hanzo_version::get(),
+        hanzo::version::get(),
         exporter.clone(),
     );
     for (key, value) in default_tags {

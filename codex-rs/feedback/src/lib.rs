@@ -768,7 +768,7 @@ impl FeedbackSnapshot {
         client_tags: Option<&BTreeMap<String, String>>,
         session_source: Option<&SessionSource>,
     ) -> BTreeMap<String, String> {
-        let cli_version = hanzo_version::get();
+        let cli_version = hanzo::version::get();
         let mut tags = BTreeMap::from([
             (String::from("thread_id"), self.thread_id.to_string()),
             (String::from("classification"), classification.to_string()),

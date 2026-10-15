@@ -628,7 +628,7 @@ fn exported_logs(
         ),
         environment: "test".to_string(),
         service_name: "codex-exec-server".to_string(),
-        service_version: hanzo_version::get().to_string(),
+        service_version: hanzo::version::get().to_string(),
         codex_home: std::env::current_dir().expect("cwd"),
         exporter,
         trace_exporter: if export_traces {

@@ -36,7 +36,7 @@ pub(crate) async fn record_command(
     let Ok(Ok(Some(otel))) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         codex_core::otel_init::build_provider(
             &config,
-            hanzo_version::get(),
+            hanzo::version::get(),
             /*service_name_override*/ None,
             analytics_default_enabled,
         )

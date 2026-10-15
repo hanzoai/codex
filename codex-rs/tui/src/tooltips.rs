@@ -48,7 +48,7 @@ lazy_static! {
 /// Pick a random tooltip to show to the user when starting Codex.
 pub(crate) fn get_tooltip(plan: Option<PlanType>, keymap: &TuiKeymap) -> Option<String> {
     if plan.is_none() {
-        return Some(hanzo_tui::STARTUP_TIP.to_string());
+        return Some(hanzo::STARTUP_TIP.to_string());
     }
     let mut rng = rand::rng();
     preferred_tooltip(&mut rng, plan).or_else(|| pick_tooltip(&mut rng, keymap))
@@ -566,7 +566,7 @@ from_date = "2000-01-01"
 # Example announcement tips for Codex TUI.
 # Each [[announcements]] entry is evaluated in order; the last matching one is shown.
 # Dates are UTC, formatted as YYYY-MM-DD. The from_date is inclusive and the to_date is exclusive.
-# version_regex matches against the CLI version (hanzo_version::get()); omit to apply to all versions.
+# version_regex matches against the CLI version (hanzo::version::get()); omit to apply to all versions.
 # target_app specify which app should display the announcement (cli, vsce, ...).
 # target_plan_types optionally restricts the announcement to plan types like ["plus", "pro"].
 # target_oses optionally restricts the announcement to operating systems like ["macos", "windows"].

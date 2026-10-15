@@ -12,7 +12,7 @@ use std::env;
 use std::ffi::OsString;
 
 pub(crate) static MCP_USER_AGENT: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| format!("codex-mcp-client/{}", hanzo_version::get()));
+    std::sync::LazyLock::new(|| format!("codex-mcp-client/{}", hanzo::version::get()));
 
 pub(crate) fn create_env_for_mcp_server(
     extra_env: Option<HashMap<OsString, OsString>>,

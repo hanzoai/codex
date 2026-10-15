@@ -39,7 +39,7 @@ tracing = { workspace = true, features = ["log"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

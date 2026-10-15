@@ -255,7 +255,7 @@ impl ChatWidget {
             options.rendered_selection = Some(&self.rendered_selection);
             options.warning_count = self.warning_display_state.count;
             options.textarea_right_reserve = right_reserve;
-            options.separate_status_line = hanzo_tui::SEPARATE_STATUS_LINE
+            options.separate_status_line = hanzo::SEPARATE_STATUS_LINE
                 && options.command_popup_placement
                     != crate::bottom_pane::CommandPopupPlacement::AboveComposer;
             self.bottom_pane.backdrop_with_options(options)

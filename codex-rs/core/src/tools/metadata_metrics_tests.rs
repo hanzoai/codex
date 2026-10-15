@@ -12,7 +12,7 @@ fn metrics() -> MetricsClient {
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

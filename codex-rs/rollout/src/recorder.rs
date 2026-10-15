@@ -958,7 +958,7 @@ impl RolloutRecorder {
                     originator,
                     creator_user_id,
                     creator_account_id,
-                    cli_version: hanzo_version::get().to_string(),
+                    cli_version: hanzo::version::get().to_string(),
                     agent_nickname: source.get_nickname(),
                     agent_role: source.get_agent_role(),
                     agent_path: source.get_agent_path().map(Into::into),

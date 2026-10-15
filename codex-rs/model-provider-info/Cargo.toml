@@ -20,7 +20,7 @@ http = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 url = { workspace = true }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 [dev-dependencies]
 codex-utils-absolute-path = { workspace = true }

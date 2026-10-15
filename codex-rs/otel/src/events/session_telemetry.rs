@@ -626,7 +626,7 @@ impl SessionTelemetry {
                 service_tier: None,
                 model_reasoning_effort: None,
                 log_user_prompts,
-                app_version: hanzo_version::get(),
+                app_version: hanzo::version::get(),
                 terminal_type,
             },
             metrics: crate::metrics::global(),

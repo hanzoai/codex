@@ -237,9 +237,9 @@ pub(crate) async fn run_turn(
     if let Some(handle) = sess
         .services
         .thread_extension_data
-        .get::<hanzo_loop::Handle>()
+        .get::<hanzo::controller::Handle>()
     {
-        let request = hanzo_loop::Request {
+        let request = hanzo::controller::Request {
             text: user_input
                 .iter()
                 .filter_map(|item| match item {
@@ -1990,11 +1990,11 @@ pub(crate) async fn built_tools(
     if let Some(handle) = sess
         .services
         .thread_extension_data
-        .get::<hanzo_loop::Handle>()
+        .get::<hanzo::controller::Handle>()
     {
         let cards = all_mcp_tools
             .iter()
-            .map(|tool| hanzo_loop::Card {
+            .map(|tool| hanzo::controller::Card {
                 name: tool.canonical_tool_name().to_string(),
                 description: tool.tool.description.as_deref().unwrap_or_default().to_string(),
             })

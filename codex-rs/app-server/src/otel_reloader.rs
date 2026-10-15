@@ -75,7 +75,7 @@ where
                     };
                     let next_provider = match codex_core::otel_init::build_provider(
                         &config,
-                        hanzo_version::get(),
+                        hanzo::version::get(),
                         Some(OTEL_SERVICE_NAME),
                         default_analytics_enabled,
                     ) {

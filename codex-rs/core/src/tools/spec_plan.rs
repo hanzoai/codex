@@ -165,7 +165,7 @@ pub(crate) fn build_tool_router(
     );
     // Hanzo: MCP tools off the controller's shortlist leave direct view; tool search
     // still finds them when the model supports it.
-    if let Some(shortlist) = step_store.get::<hanzo_loop::Shortlist>() {
+    if let Some(shortlist) = step_store.get::<hanzo::controller::Shortlist>() {
         let search = model_info.supports_search_tool;
         for tool in registry.entries_mut() {
             let name = tool.runtime.tool_name();

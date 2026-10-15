@@ -16,7 +16,7 @@ fn records_bounded_spawn_phase_metrics() {
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

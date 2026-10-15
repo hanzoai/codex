@@ -62,7 +62,7 @@ async fn turn_input_and_history_advance_while_ranking_is_blocked()
         MetricsConfig::in_memory(
             "test",
             "codex-skills-extension",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

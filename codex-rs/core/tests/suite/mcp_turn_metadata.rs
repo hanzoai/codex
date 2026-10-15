@@ -764,7 +764,7 @@ async fn approved_mcp_tool_call_metadata_records_prior_user_input_request(
         .expect("MCP tools/call turn metadata");
     assert_eq!(
         mcp_turn_metadata["codex_version"],
-        hanzo_version::get()
+        hanzo::version::get()
     );
     assert_eq!(
         (

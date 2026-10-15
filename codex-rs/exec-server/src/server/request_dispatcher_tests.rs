@@ -166,7 +166,7 @@ async fn request_queue_waits_for_dispatcher_admission_before_recording_telemetry
         MetricsConfig::in_memory(
             "test",
             "codex-exec-server",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),
@@ -376,7 +376,7 @@ fn request_telemetry_fixture(router: RpcRouter<ExecServerHandler>) -> RequestTel
         MetricsConfig::in_memory(
             "test",
             "codex-exec-server",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

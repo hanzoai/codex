@@ -137,7 +137,7 @@ uuid = { workspace = true }
 
 codex-windows-sandbox = { workspace = true }
 tokio-util = { workspace = true, features = ["time"] }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

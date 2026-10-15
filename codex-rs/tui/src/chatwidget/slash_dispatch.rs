@@ -914,19 +914,19 @@ impl ChatWidget {
                     .into_iter()
                     .map(|preset| preset.model)
                     .collect();
-                match hanzo_tui::model::pick(trimmed, &offered) {
-                    hanzo_tui::model::Pick::One(model) => {
+                match hanzo::model::pick(trimmed, &offered) {
+                    hanzo::model::Pick::One(model) => {
                         self.add_info_message(format!("Model set to {model}."), /*hint*/ None);
                         self.app_event_tx.send(AppEvent::SelectSessionModel {
                             model,
                             effort: None,
                         });
                     }
-                    hanzo_tui::model::Pick::Many(names) => self.add_error_message(format!(
+                    hanzo::model::Pick::Many(names) => self.add_error_message(format!(
                         "`{trimmed}` fits {}. Name one of them.",
                         names.join(", ")
                     )),
-                    hanzo_tui::model::Pick::None => self.add_error_message(format!(
+                    hanzo::model::Pick::None => self.add_error_message(format!(
                         "No model matches `{trimmed}`. Use /model to see the list."
                     )),
                 }

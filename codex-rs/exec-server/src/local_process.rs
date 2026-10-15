@@ -1409,7 +1409,7 @@ mod tests {
         let metrics = codex_otel::MetricsClient::new(MetricsConfig::in_memory(
             "test",
             "codex-exec-server",
-            hanzo_version::get(),
+            hanzo::version::get(),
             exporter.clone(),
         ))
         .expect("metrics");

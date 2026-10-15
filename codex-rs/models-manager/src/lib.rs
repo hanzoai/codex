@@ -20,8 +20,8 @@ pub fn bundled_models_response()
     for model in &mut response.models {
         model.visibility = ModelVisibility::Hide;
     }
-    let default = hanzo_config::DEFAULT_MODEL;
-    let served = hanzo_config::catalog::MODELS
+    let default = hanzo::DEFAULT_MODEL;
+    let served = hanzo::catalog::MODELS
         .iter()
         .map(|model| model.slug)
         .filter(|slug| !slug.contains('/') && *slug != default);
@@ -42,6 +42,6 @@ pub fn bundled_models_response()
 
 /// Convert the client version string to a whole version string (e.g. "1.2.3-alpha.4" -> "1.2.3").
 pub fn client_version_to_whole() -> String {
-    let version = hanzo_version::get();
+    let version = hanzo::version::get();
     version.split(['-', '+']).next().unwrap_or(version).to_string()
 }

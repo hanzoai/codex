@@ -26,7 +26,7 @@ fn records_every_outcome_and_times_preparation_without_paths() -> anyhow::Result
         MetricsConfig::in_memory(
             "test",
             "sandbox-integrity",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

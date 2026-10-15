@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::Message;
 fn runtime_metrics_summary_collects_tool_api_and_streaming_metrics() -> Result<()> {
     let exporter = InMemoryMetricExporter::default();
     let metrics = MetricsClient::new(
-        MetricsConfig::in_memory("test", "codex-cli", hanzo_version::get(), exporter)
+        MetricsConfig::in_memory("test", "codex-cli", hanzo::version::get(), exporter)
             .with_runtime_reader(),
     )?;
     let manager = SessionTelemetry::new(

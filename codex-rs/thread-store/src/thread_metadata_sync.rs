@@ -85,7 +85,7 @@ impl ThreadMetadataSync {
             agent_role: Some(params.source.get_agent_role()),
             agent_path: Some(params.source.get_agent_path().map(Into::into)),
             cwd: Some(cwd.clone()),
-            cli_version: Some(hanzo_version::get().to_string()),
+            cli_version: Some(hanzo::version::get().to_string()),
             git_info: git_info.map(git_info_patch_from_observation),
             memory_mode: Some(params.metadata.memory_mode),
             ..Default::default()

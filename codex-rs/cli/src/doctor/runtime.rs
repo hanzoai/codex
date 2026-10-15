@@ -28,7 +28,7 @@ pub(super) fn runtime_check() -> DoctorCheck {
     let platform = format!("{os}-{arch}");
     let install_method = install_method_name(&install_context);
     let mut details = vec![
-        format!("version: {}", hanzo_version::get()),
+        format!("version: {}", hanzo::version::get()),
         format!("platform: {platform}"),
         format!(
             "install method: {}",

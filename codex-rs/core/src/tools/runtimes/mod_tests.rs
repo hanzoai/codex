@@ -518,7 +518,7 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_metadata_from_env() {
         ("CODEX_TOOL_CALL_ID".to_string(), "nested-call".to_string()),
         (
             "CODEX_VERSION".to_string(),
-            hanzo_version::get().to_string(),
+            hanzo::version::get().to_string(),
         ),
     ]);
     let rewritten = maybe_wrap_shell_lc_with_snapshot(
@@ -538,7 +538,7 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_metadata_from_env() {
     assert!(output.status.success(), "command failed: {output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        concat!("nested-thread|nested-call|", hanzo_version::get()),
+        concat!("nested-thread|nested-call|", hanzo::version::get()),
     );
 }
 

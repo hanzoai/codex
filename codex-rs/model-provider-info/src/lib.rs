@@ -537,7 +537,7 @@ other non-default provider fields are not supported"
             wire_api: WireApi::Responses,
             query_params: None,
             http_headers: Some(
-                [("version".to_string(), hanzo_version::get().into())]
+                [("version".to_string(), hanzo::version::get().into())]
                     .into_iter()
                     .collect(),
             ),

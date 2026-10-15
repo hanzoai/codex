@@ -60,7 +60,7 @@ tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
-hanzo-version = { workspace = true }
+hanzo = { workspace = true }
 
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true, features = [

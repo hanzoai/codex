@@ -44,7 +44,7 @@ pub(super) async fn record_start(
     let Ok(Ok(Some(otel))) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         codex_app_server_client::build_otel_provider(
             config,
-            hanzo_version::get(),
+            hanzo::version::get(),
             /*service_name_override*/ None,
             /*default_analytics_enabled*/ true,
         )

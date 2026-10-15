@@ -107,7 +107,7 @@ async fn task_context_recovers_prior_requests_and_explicit_intent_without_changi
         MetricsConfig::in_memory(
             "test",
             "codex-skills-extension",
-            hanzo_version::get(),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

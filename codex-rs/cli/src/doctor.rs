@@ -608,7 +608,7 @@ async fn build_report(
         schema_version: 1,
         generated_at: generated_at(),
         overall_status,
-        codex_version: hanzo_version::get().to_string(),
+        codex_version: hanzo::version::get().to_string(),
         checks,
     }
 }

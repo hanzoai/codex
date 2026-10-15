@@ -496,7 +496,7 @@ fn agent_identity_authapi_url(agent_identity_authapi_base_url: &str, api_path: &
 
 pub fn build_abom(session_source: SessionSource) -> AgentBillOfMaterials {
     AgentBillOfMaterials {
-        agent_version: hanzo_version::get().to_string(),
+        agent_version: hanzo::version::get().to_string(),
         agent_harness_id: match &session_source {
             SessionSource::VSCode => "codex-app".to_string(),
             SessionSource::Cli
