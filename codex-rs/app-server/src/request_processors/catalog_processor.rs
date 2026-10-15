@@ -208,7 +208,7 @@ impl CatalogRequestProcessor {
                     || current.model_provider != config.model_provider
                 {
                     return Err(invalid_request(
-                        "Model provider settings changed. Restart Codex to apply them, then retry fetching the model list",
+                        "Model provider settings changed. Restart Dev to apply them, then retry fetching the model list",
                     ));
                 }
                 return Err(invalid_request(

@@ -223,7 +223,7 @@ pub(crate) fn new_session_info(
             Line::from(vec![
                 "  ".into(),
                 "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
+                " - create an AGENTS.md file with instructions for Dev".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
@@ -233,7 +233,7 @@ pub(crate) fn new_session_info(
             Line::from(vec![
                 "  ".into(),
                 "/permissions".into(),
-                " - choose what Codex is allowed to do".dim(),
+                " - choose what Dev is allowed to do".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),

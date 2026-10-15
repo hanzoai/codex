@@ -108,7 +108,7 @@ pub(super) async fn check(config: &Config) -> DoctorCheck {
                     Err(_) => {
                         check.status = CheckStatus::Warning;
                         check.summary =
-                            "filesystem path probes unavailable: cannot locate Codex executable"
+                            "filesystem path probes unavailable: cannot locate Dev executable"
                                 .to_string();
                         return check;
                     }

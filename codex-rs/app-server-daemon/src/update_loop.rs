@@ -351,7 +351,7 @@ async fn update_once(
     let codex_home = package_root
         .parent()
         .and_then(Path::parent)
-        .context("daemon package root has no Codex home")?;
+        .context("daemon package root has no Dev home")?;
     let (installer_mode, installer_guard) =
         if let UpdateTrigger::RestoreProduction(expected) = trigger {
             anyhow::ensure!(
@@ -533,7 +533,7 @@ fn selected_release(daemon: &Daemon) -> Result<(std::path::PathBuf, std::path::P
         .settings_file
         .parent()
         .and_then(Path::parent)
-        .context("daemon settings path has no Codex home")?;
+        .context("daemon settings path has no Dev home")?;
     let root = crate::managed_install::package_root(home);
     let release = std::fs::canonicalize(root.join("current"))?;
     let name = release
@@ -558,7 +558,7 @@ pub(crate) fn reexec_managed_updater(managed_codex_bin: &Path, state_dir: &Path)
     let err = command.exec();
     Err(err).with_context(|| {
         format!(
-            "failed to replace updater with managed Codex binary {}",
+            "failed to replace updater with managed Dev binary {}",
             managed_codex_bin.display()
         )
     })
@@ -602,7 +602,7 @@ async fn run_installer_script(
             package_root
                 .parent()
                 .and_then(Path::parent)
-                .context("package root has no Codex home")?,
+                .context("package root has no Dev home")?,
         )
         .env("CODEX_INSTALL_DEFER_SELECTION", defer_selection)
         .env(
@@ -623,11 +623,11 @@ async fn run_installer_script(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .context("failed to invoke standalone Codex updater")?;
+        .context("failed to invoke standalone Dev updater")?;
     let mut stderr = child
         .stderr
         .take()
-        .context("standalone Codex updater stderr was unavailable")?;
+        .context("standalone Dev updater stderr was unavailable")?;
     let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(
         INSTALLER_STDERR_TAIL_BYTES,
     )));
@@ -664,7 +664,7 @@ async fn run_installer_script(
     let mut stdin = child
         .stdin
         .take()
-        .context("standalone Codex updater stdin was unavailable")?;
+        .context("standalone Dev updater stdin was unavailable")?;
     #[cfg(unix)]
     let mut terminate = std::pin::pin!(terminate);
     #[cfg(unix)]
@@ -683,7 +683,7 @@ async fn run_installer_script(
     }
     if let Some(Err(err)) = write_result {
         stderr_task.abort();
-        return Err(err).context("failed to pass standalone Codex updater to shell");
+        return Err(err).context("failed to pass standalone Dev updater to shell");
     }
     #[cfg(unix)]
     let status = tokio::select! {
@@ -699,7 +699,7 @@ async fn run_installer_script(
         Ok(status) => status,
         Err(err) => {
             stderr_task.abort();
-            return Err(err).context("failed to wait for standalone Codex updater");
+            return Err(err).context("failed to wait for standalone Dev updater");
         }
     };
 
@@ -716,9 +716,9 @@ async fn run_installer_script(
         let detail = String::from_utf8_lossy(&bytes);
         let detail = detail.trim();
         if detail.is_empty() {
-            anyhow::bail!("standalone Codex updater exited with status {status}")
+            anyhow::bail!("standalone Dev updater exited with status {status}")
         }
-        anyhow::bail!("standalone Codex updater exited with status {status}:\n{detail}")
+        anyhow::bail!("standalone Dev updater exited with status {status}:\n{detail}")
     }
 }
 
@@ -747,7 +747,7 @@ async fn fetch_installer_script(http: &impl InstallerHttp) -> Result<Vec<u8>> {
     match http.get(INSTALL_URL).await? {
         InstallerResponse::Success(body) => Ok(body),
         InstallerResponse::Unsuccessful { status } => {
-            anyhow::bail!("standalone Codex updater request failed with status {status}")
+            anyhow::bail!("standalone Dev updater request failed with status {status}")
         }
     }
 }
@@ -774,7 +774,7 @@ impl InstallerHttp for RouteAwareClientPool {
         let response = RouteAwareClientPool::get(self, url)
             .send()
             .await
-            .context("failed to fetch standalone Codex updater")?;
+            .context("failed to fetch standalone Dev updater")?;
         if !response.status().is_success() {
             return Ok(InstallerResponse::Unsuccessful {
                 status: response.status().as_u16(),
@@ -783,7 +783,7 @@ impl InstallerHttp for RouteAwareClientPool {
         let body = response
             .bytes()
             .await
-            .context("failed to read standalone Codex updater")?
+            .context("failed to read standalone Dev updater")?
             .to_vec();
         Ok(InstallerResponse::Success(body))
     }

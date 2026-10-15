@@ -184,10 +184,10 @@ impl App {
                     );
                     if !matches!(self.app_server_target, AppServerTarget::Embedded) {
                         message.push_str(
-                            " If the server restarts, Codex will reconnect automatically.",
+                            " If the server restarts, Dev will reconnect automatically.",
                         );
                     }
-                    (Some("Codex's background server is shutting down"), message)
+                    (Some("Dev's background server is shutting down"), message)
                 } else {
                     (None, format!("Failed to start session: {error}"))
                 };

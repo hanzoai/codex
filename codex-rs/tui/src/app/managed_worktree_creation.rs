@@ -261,7 +261,7 @@ impl App {
             Ok(_) => {
                 return self.retained_worktree_error(
                     &checkout,
-                    "The new worktree is not trusted; run Codex there.",
+                    "The new worktree is not trusted; run Dev there.",
                 );
             }
             Err(error) => {

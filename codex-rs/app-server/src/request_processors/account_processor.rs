@@ -358,7 +358,7 @@ impl AccountRequestProcessor {
                     };
                     LoginSuccessPage::Hosted {
                         url: CODEX_OPEN_APP_URL.parse().map_err(|err| {
-                            internal_error(format!("invalid Codex open app URL: {err}"))
+                            internal_error(format!("invalid Dev open app URL: {err}"))
                         })?,
                         app_brand,
                     }
@@ -637,7 +637,7 @@ impl AccountRequestProcessor {
         {
             *url = open_app_url
                 .parse()
-                .map_err(|err| internal_error(format!("invalid Codex open app URL: {err}")))?;
+                .map_err(|err| internal_error(format!("invalid Dev open app URL: {err}")))?;
         }
 
         Ok(opts)

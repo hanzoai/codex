@@ -201,7 +201,7 @@ impl PidBackend {
                             .pid_file
                             .parent()
                             .and_then(Path::parent)
-                            .context("daemon pid path has no Codex home")?;
+                            .context("daemon pid path has no Dev home")?;
                         let socket_path =
                             codex_app_server_transport::app_server_control_socket_path(codex_home)?;
                         if let Err(err) =

@@ -173,7 +173,7 @@ impl ExecServerCommand {
         let codex_self_exe = arg0_paths
             .codex_self_exe
             .clone()
-            .ok_or_else(|| anyhow::anyhow!("Codex executable path is not configured"))?;
+            .ok_or_else(|| anyhow::anyhow!("Dev executable path is not configured"))?;
         let mut runtime_paths = ExecServerRuntimeOptions::new(
             codex_self_exe,
             arg0_paths.codex_linux_sandbox_exe.clone(),

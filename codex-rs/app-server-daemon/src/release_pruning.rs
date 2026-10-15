@@ -136,7 +136,7 @@ pub(crate) async fn prune(daemon: &Daemon, root: &Path, settings: &DaemonSetting
         .settings_file
         .parent()
         .and_then(Path::parent)
-        .context("missing Codex home")?;
+        .context("missing Dev home")?;
     // Require a real dedicated root, never a shared alias or an in-progress migration.
     let releases = root.join("releases");
     let mount = owned_mount(&home.join("packages"))?;

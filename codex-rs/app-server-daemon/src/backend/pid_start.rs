@@ -136,7 +136,7 @@ impl PidBackend {
                 .pid_file
                 .parent()
                 .and_then(std::path::Path::parent)
-                .context("daemon pid path has no Codex home")?;
+                .context("daemon pid path has no Dev home")?;
             let recovery_file = codex_app_server_transport::daemon_recovery_file_path(codex_home);
             match fs::remove_file(&recovery_file).await {
                 Ok(()) => {}

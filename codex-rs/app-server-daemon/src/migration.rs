@@ -31,7 +31,7 @@ pub(super) async fn run(http: &impl InstallerHttp, legacy: &Daemon) -> Result<Up
         .0
         .parent()
         .and_then(Path::parent)
-        .context("package root has no Codex home")?;
+        .context("package root has no Dev home")?;
     let root = home.join("packages/app-server-daemon");
     let settings = legacy.load_settings().await?;
     let running = legacy.running_backend_instance(&settings).await?;
@@ -166,14 +166,14 @@ pub(super) async fn run(http: &impl InstallerHttp, legacy: &Daemon) -> Result<Up
     };
     let running_version = if running.is_some() {
         selected.start_managed_backend(&settings).await.context(
-            "daemon migrated but could not start; retry with `codex app-server daemon start`",
+            "daemon migrated but could not start; retry with `dev app-server daemon start`",
         )?;
         Some(
             selected
                 .wait_until_ready()
                 .await
                 .context(
-                    "daemon migrated but is not ready; retry with `codex app-server daemon start`",
+                    "daemon migrated but is not ready; retry with `dev app-server daemon start`",
                 )?
                 .app_server_version,
         )

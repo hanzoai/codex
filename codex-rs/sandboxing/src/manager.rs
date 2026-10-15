@@ -414,7 +414,7 @@ impl SandboxManager {
                 let pending = pending_sandboxed_request?;
                 let exe = sandbox_exe.ok_or_else(|| {
                     SandboxTransformError::WindowsMxcPreparation(
-                        "missing Codex executable path".to_string(),
+                        "missing Dev executable path".to_string(),
                     )
                 })?;
                 let mut full_command =
@@ -588,7 +588,7 @@ impl SandboxManager {
         let proxy_settings_mode = request.windows_sandbox_proxy_settings_mode;
         let sandbox_exe = request.transform.sandbox_exe.ok_or_else(|| {
             SandboxTransformError::WindowsSandboxPreparation(
-                "missing Codex executable path".to_string(),
+                "missing Dev executable path".to_string(),
             )
         })?;
         let mut request = self.transform(request.transform)?;

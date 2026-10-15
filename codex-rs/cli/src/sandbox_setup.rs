@@ -53,7 +53,7 @@ impl SandboxSetupCommand {
         if self.elevated_sandbox_level {
             Ok(SandboxSetupLevel::Elevated)
         } else {
-            anyhow::bail!("`codex sandbox setup` currently requires --elevated");
+            anyhow::bail!("`dev sandbox setup` currently requires --elevated");
         }
     }
 }
@@ -99,7 +99,7 @@ async fn run_elevated(
         .cli_overrides(cli_overrides)
         .build()
         .await
-        .context("failed to load target user's Codex config for sandbox provisioning")?;
+        .context("failed to load target user's Dev config for sandbox provisioning")?;
 
     codex_core::windows_sandbox::run_elevated_provisioning_setup(
         identity.codex_home.as_path(),

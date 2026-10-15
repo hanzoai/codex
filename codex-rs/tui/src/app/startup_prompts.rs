@@ -135,7 +135,7 @@ pub(super) fn model_upgrade_for_migration(
         _ => return None,
     };
     let availability = if model == "openai.gpt-5.4" {
-        "no longer offered in Codex"
+        "no longer offered in Dev"
     } else {
         "no longer available"
     };
@@ -145,7 +145,7 @@ pub(super) fn model_upgrade_for_migration(
         model_link: None,
         upgrade_copy: None,
         migration_markdown: Some(format!(
-            "{current_name} is {availability}\n\nCodex now uses {target_name} in place of {current_name}. Switch to {target_name} to continue.\n"
+            "{current_name} is {availability}\n\nDev now uses {target_name} in place of {current_name}. Switch to {target_name} to continue.\n"
         )),
         retirement_at: None,
     })

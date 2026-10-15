@@ -349,7 +349,7 @@ async fn emit_thread_stop_lifecycle(sess: &Session) {
 
 pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
     shutdown_session_runtime(sess).await;
-    info!("Shutting down Codex instance");
+    info!("Shutting down Dev instance");
     let history = sess.clone_history().await;
     let turn_count = history
         .raw_items()

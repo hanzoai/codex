@@ -202,7 +202,7 @@ impl McpRequestProcessor {
             // Resource scopes and per-server callbacks do not alter the shared IdP registration.
             let scope = ema_auth_scope(auth.as_ref()).ok_or_else(|| {
                 invalid_request(
-                    "enterprise MCP authentication requires a signed-in Codex user and workspace",
+                    "enterprise MCP authentication requires a signed-in Dev user and workspace",
                 )
             })?;
             let idp = server.oauth_idp().ok_or_else(|| {
