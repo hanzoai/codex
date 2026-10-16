@@ -1354,7 +1354,7 @@ mod tests {
         let rendered = render_human_report(&sample_report(), detailed_no_color_unicode_options());
         let expected = format!(
             "\
-Codex Doctor v0.0.0
+Hanzo Dev Doctor v0.0.0
 
 Notes
    ⚠ terminal     narrow terminal
@@ -1489,7 +1489,7 @@ Background Server
         let rendered = render_human_report(&sample_report(), summary_no_color_unicode_options());
         let expected = format!(
             "\
-Codex Doctor v0.0.0
+Hanzo Dev Doctor v0.0.0
 
 Notes
    ⚠ terminal     narrow terminal
@@ -1597,7 +1597,7 @@ Run dev doctor without --summary for detailed diagnostics.
         );
         let expected = format!(
             "\
-Codex Doctor v0.0.0
+Hanzo Dev Doctor v0.0.0
 
 Notes
    [!!] terminal     narrow terminal

@@ -9,7 +9,7 @@ expression: "render_bottom_popup(&app.chat_widget, 80)"
 
 › 1. Install latest public stable
   2. Use this CLI build
-     Restart background server (disabled)  Codex hasn't verified it manages this
+     Restart background server (disabled)  Dev hasn't verified it manages this
                                            server. Restart it where it was
                                            started.
 

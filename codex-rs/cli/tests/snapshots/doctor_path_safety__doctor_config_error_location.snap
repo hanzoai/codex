@@ -1,5 +1,6 @@
 ---
 source: cli/tests/doctor_path_safety.rs
+assertion_line: 410
 expression: "serde_json::to_string_pretty(&check)?"
 ---
 {
@@ -11,7 +12,7 @@ expression: "serde_json::to_string_pretty(&check)?"
     "line": "1"
   },
   "id": "config.load",
-  "remediation": "Fix the reported config error, then rerun codex doctor.",
+  "remediation": "Fix the reported config error, then rerun dev doctor.",
   "status": "fail",
   "summary": "config could not be loaded"
 }

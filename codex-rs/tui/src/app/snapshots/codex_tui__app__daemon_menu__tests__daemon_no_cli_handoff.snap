@@ -1,10 +1,11 @@
 ---
 source: tui/src/app/daemon_menu_tests.rs
+assertion_line: 288
 expression: "render_bottom_popup(&app.chat_widget, 80)"
 ---
   Daemon
   Not connected to the local background server.
-  Run the Codex CLI to manage the daemon from this menu.
+  Run the Dev CLI to manage the daemon from this menu.
 
 
 ›    Install latest public stable

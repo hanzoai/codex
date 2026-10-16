@@ -1,8 +1,9 @@
 ---
 source: cli/src/doctor/output.rs
+assertion_line: 1481
 expression: "render_human_report(&report, detailed_no_color_unicode_options())"
 ---
-Codex Doctor v0.0.0
+Hanzo Dev Doctor v0.0.0
 
 Notes
    ↑ desktop      build 123 available (ready to install)
