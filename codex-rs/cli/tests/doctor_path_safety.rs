@@ -123,7 +123,7 @@ wire_api = "responses"
             .env("HOME", self.root.path())
             .env("PATH", &self.path)
             .env("CODEX_TEST_HELPER_MARKER", &self.marker)
-            .env("CODEX_MANAGED_BY_NPM", "1")
+            .env("DEV_MANAGED_BY_NPM", "1")
             .env(
                 "CODEX_MANAGED_PACKAGE_ROOT",
                 self.workspace.join("node_modules/@openai/codex"),
@@ -643,7 +643,7 @@ async fn feedback_with_logs_does_not_execute_path_helpers() -> Result<()> {
             ("PATH", Some(path.as_ref())),
             ("HOME", Some(home.as_ref())),
             ("CODEX_TEST_HELPER_MARKER", Some(marker.as_ref())),
-            ("CODEX_MANAGED_BY_NPM", Some("1")),
+            ("DEV_MANAGED_BY_NPM", Some("1")),
             ("CODEX_MANAGED_PACKAGE_ROOT", Some(package_root.as_ref())),
             ("ZELLIJ", Some("0")),
             ("ZELLIJ_VERSION", None),

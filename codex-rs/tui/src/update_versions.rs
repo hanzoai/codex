@@ -9,7 +9,7 @@ pub(crate) fn is_newer(latest: &str, current: &str) -> Option<bool> {
 #[cfg(any(not(debug_assertions), test))]
 pub(crate) fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<String> {
     latest_tag_name
-        .strip_prefix("rust-v")
+        .strip_prefix(hanzo::RELEASE_TAG_PREFIX)
         .map(str::to_owned)
         .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))
 }
@@ -60,14 +60,14 @@ mod tests {
     #[test]
     fn extracts_version_from_latest_tag() {
         assert_eq!(
-            extract_version_from_latest_tag("rust-v1.5.0").expect("failed to parse version"),
+            extract_version_from_latest_tag("v1.5.0").expect("failed to parse version"),
             "1.5.0"
         );
     }
 
     #[test]
     fn latest_tag_without_prefix_is_invalid() {
-        assert!(extract_version_from_latest_tag("v1.5.0").is_err());
+        assert!(extract_version_from_latest_tag("1.5.0").is_err());
     }
 
     #[test]

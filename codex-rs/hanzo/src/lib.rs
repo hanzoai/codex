@@ -14,9 +14,30 @@ pub const PRODUCT_NAME: &str = "Hanzo Dev";
 pub const INPUT_PLACEHOLDER: &str = "Ask Hanzo Dev to do anything";
 pub const STARTUP_TIP: &str = "Use **/mcp** to inspect connected tools. Hanzo MCP provides cloud controls and local development tools.";
 
-/// Dev checks no one else's releases. The check upstream makes compares this build
-/// with another product's latest release and offers that product's installer.
-pub const UPDATE_CHECK: bool = false;
+/// Dev checks its own latest release at startup and offers the way it was installed
+/// to update it: npm, Homebrew, or hanzo.sh.
+pub const UPDATE_CHECK: bool = true;
+pub const LATEST_RELEASE: &str = "https://api.github.com/repos/hanzoai/dev/releases/latest";
+pub const RELEASE_NOTES: &str = "https://github.com/hanzoai/dev/releases/latest";
+/// A release is tagged `v` and its version.
+pub const RELEASE_TAG_PREFIX: &str = "v";
+/// The installer every Hanzo tool comes from; run again, it updates.
+pub const INSTALL_URL: &str = "https://hanzo.sh";
+pub const INSTALL_SCRIPT: &str = "curl -fsSL https://hanzo.sh | sh -s -- -q dev";
+/// The npm package Dev ships as, its registry document, and the variable its launcher
+/// sets so the binary knows npm owns it.
+pub const NPM_PACKAGE: &str = "@hanzo/dev";
+pub const NPM_REGISTRY: &str = "https://registry.npmjs.org/@hanzo%2fdev";
+pub const NPM_MANAGED: &str = "DEV_MANAGED_BY_NPM";
+/// The Homebrew formula in Hanzo's tap; the release that publishes Dev updates it.
+pub const BREW_FORMULA: &str = "hanzoai/tap/hanzo-dev";
+
+/// The Hanzo mark (brand/assets/logo/favicon.svg) as one path, with its bounds: the
+/// shape the welcome animation draws.
+pub const MARK: (&str, [f64; 4]) = (
+    "M22.21 67V44.6369H0V67H22.21ZM66.7038 22.3184H22.2534L0.0878906 44.6367H44.4634L66.7038 22.3184ZM22.21 0H0V22.3184H22.21V0ZM66.7198 0H44.5098V22.3184H66.7198V0ZM66.7198 67V44.6369H44.5098V67H66.7198Z",
+    [0.0, 0.0, 66.7198, 67.0],
+);
 /// Dev runs its server inside the process. Upstream's shared background server
 /// starts from an installer's package directory, which Dev does not ship.
 pub const BACKGROUND_SERVER: bool = false;

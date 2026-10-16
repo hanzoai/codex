@@ -10,17 +10,17 @@ use codex_install_context::StandalonePlatform;
 pub enum UpdateAction {
     /// Replace the local daemon after restoring the terminal.
     Daemon(DaemonUpdateSource),
-    /// Update via `npm install -g @openai/codex@latest`.
+    /// Update via `npm install -g @hanzo/dev@latest`.
     NpmGlobalLatest,
-    /// Update via `bun install -g @openai/codex@latest`.
+    /// Update via `bun install -g @hanzo/dev@latest`.
     BunGlobalLatest,
-    /// Update via `vp install -g @openai/codex@latest`.
+    /// Update via `vp install -g @hanzo/dev@latest`.
     VitePlusGlobalLatest,
-    /// Update via `pnpm add -g @openai/codex@latest`.
+    /// Update via `pnpm add -g @hanzo/dev@latest`.
     PnpmGlobalLatest,
-    /// Update via `brew upgrade codex`.
+    /// Update via `brew upgrade hanzoai/tap/hanzo-dev`.
     BrewUpgrade,
-    /// Update via `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`.
+    /// Update via `curl -fsSL https://hanzo.sh | sh -s -- -q dev`.
     StandaloneUnix,
     /// Update via `$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex`.
     StandaloneWindows,
@@ -39,7 +39,8 @@ impl UpdateAction {
                 StandalonePlatform::Unix => UpdateAction::StandaloneUnix,
                 StandalonePlatform::Windows => UpdateAction::StandaloneWindows,
             }),
-            InstallMethod::Other => None,
+            // A binary no package manager owns came from hanzo.sh, which updates it.
+            InstallMethod::Other => (!cfg!(windows)).then_some(UpdateAction::StandaloneUnix),
         }
     }
 
@@ -47,17 +48,14 @@ impl UpdateAction {
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
             UpdateAction::Daemon(source) => ("codex", source.command_args()),
-            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@openai/codex"]),
-            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@openai/codex"]),
-            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "@openai/codex"]),
-            UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", "@openai/codex"]),
-            UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "codex"]),
+            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", hanzo::NPM_PACKAGE]),
+            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", hanzo::NPM_PACKAGE]),
+            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", hanzo::NPM_PACKAGE]),
+            UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", hanzo::NPM_PACKAGE]),
+            UpdateAction::BrewUpgrade => ("brew", &["upgrade", hanzo::BREW_FORMULA]),
             UpdateAction::StandaloneUnix => (
                 "sh",
-                &[
-                    "-c",
-                    "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
-                ],
+                &["-c", hanzo::INSTALL_SCRIPT],
             ),
             UpdateAction::StandaloneWindows => (
                 "powershell",
@@ -101,7 +99,7 @@ mod tests {
                 method: InstallMethod::Other,
                 package_layout: None,
             }),
-            None
+            (!cfg!(windows)).then_some(UpdateAction::StandaloneUnix)
         );
         assert_eq!(
             UpdateAction::from_install_context(&InstallContext {
@@ -161,10 +159,7 @@ mod tests {
             UpdateAction::StandaloneUnix.command_args(),
             (
                 "sh",
-                &[
-                    "-c",
-                    "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
-                ][..],
+                &["-c", "curl -fsSL https://hanzo.sh | sh -s -- -q dev"][..],
             )
         );
         assert_eq!(

@@ -124,7 +124,7 @@ impl InstallContext {
                 Some(InstallMethod::VitePlus)
             } else if std::env::var_os("CODEX_MANAGED_BY_PNPM").is_some() {
                 Some(InstallMethod::Pnpm)
-            } else if std::env::var_os("CODEX_MANAGED_BY_NPM").is_some() {
+            } else if std::env::var_os(hanzo::NPM_MANAGED).is_some() {
                 Some(InstallMethod::Npm)
             } else if std::env::var_os("CODEX_MANAGED_BY_BUN").is_some() {
                 Some(InstallMethod::Bun)

@@ -13,6 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+hanzo = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 semver = { workspace = true, features = ["serde"] }

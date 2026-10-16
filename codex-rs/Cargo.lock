@@ -3800,6 +3800,7 @@ version = "0.0.0"
 dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-home-dir",
+ "hanzo",
  "pretty_assertions",
  "semver",
  "serde",

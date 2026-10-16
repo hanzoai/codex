@@ -3,7 +3,6 @@
 
 mod geometry;
 mod lighting;
-mod paths;
 mod policy;
 mod renderer;
 mod sequence;

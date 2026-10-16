@@ -980,12 +980,12 @@ fn doctor_install_context(current_exe: Option<&Path>) -> InstallContext {
 }
 
 fn doctor_managed_by_npm(current_exe: Option<&Path>) -> bool {
-    env::var_os("CODEX_MANAGED_BY_NPM").is_some()
+    env::var_os(hanzo::NPM_MANAGED).is_some()
         && !inherited_managed_env_for_cargo_binary(current_exe)
 }
 
 fn inherited_managed_env_for_cargo_binary(current_exe: Option<&Path>) -> bool {
-    if env::var_os("CODEX_MANAGED_BY_NPM").is_none()
+    if env::var_os(hanzo::NPM_MANAGED).is_none()
         && env::var_os("CODEX_MANAGED_BY_BUN").is_none()
         && env::var_os("CODEX_MANAGED_BY_VITE_PLUS").is_none()
         && env::var_os("CODEX_MANAGED_BY_PNPM").is_none()
