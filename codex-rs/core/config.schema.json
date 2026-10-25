@@ -2662,6 +2662,10 @@
           "format": "int64",
           "type": "integer"
         },
+        "model_provider": {
+          "description": "Optional independent provider for background extraction and consolidation. An unknown provider disables the pipeline; it never falls back to the foreground.",
+          "type": "string"
+        },
         "use_memories": {
           "description": "When `false`, skip injecting memory usage instructions into developer prompts.",
           "type": "boolean"

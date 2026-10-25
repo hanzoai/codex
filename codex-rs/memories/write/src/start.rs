@@ -45,6 +45,24 @@ pub fn start_memories_startup_task(
     for version in versions {
         let mut pipeline_config = config.as_ref().clone();
         pipeline_config.memories.version = version;
+        // Background learning may use a local provider even when the foreground
+        // session uses a different model. Resolve before constructing either the
+        // extraction client or the consolidation worker, so BOTH use this route.
+        // A missing route must never silently buy a foreground-provider call.
+        if let Some(id) = pipeline_config.memories.model_provider.clone() {
+            let Some(provider) = pipeline_config.model_providers.get(&id).cloned() else {
+                warn!(provider = %id, "memory provider is not configured; skipping background learning");
+                continue;
+            };
+            if pipeline_config.memories.extract_model.is_none()
+                || pipeline_config.memories.consolidation_model.is_none()
+            {
+                warn!(provider = %id, "independent memory provider needs explicit extraction and consolidation models; skipping");
+                continue;
+            }
+            pipeline_config.model_provider_id = id;
+            pipeline_config.model_provider = provider;
+        }
         let config = Arc::new(pipeline_config);
         let auth_manager = Arc::clone(&auth_manager);
         let parent_permission_profile = parent_permission_profile.clone();

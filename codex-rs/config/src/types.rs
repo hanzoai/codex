@@ -320,6 +320,9 @@ pub use codex_protocol::MemoryVersion;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct MemoriesToml {
+    /// Optional independent provider for background extraction and consolidation.
+    /// An unknown provider disables the pipeline; it never falls back to the foreground.
+    pub model_provider: Option<String>,
     /// Selects the memory pipeline; v1 remains the default.
     pub version: Option<MemoryVersion>,
     /// Generate both versions while the selected version supplies context.
@@ -357,6 +360,7 @@ pub struct MemoriesToml {
 /// Effective memories settings after defaults are applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MemoriesConfig {
+    pub model_provider: Option<String>,
     pub version: MemoryVersion,
     pub dual_write: bool,
     pub disable_on_external_context: bool,
@@ -376,6 +380,7 @@ pub struct MemoriesConfig {
 impl Default for MemoriesConfig {
     fn default() -> Self {
         Self {
+            model_provider: None,
             version: MemoryVersion::V1,
             dual_write: false,
             disable_on_external_context: false,
@@ -398,6 +403,7 @@ impl From<MemoriesToml> for MemoriesConfig {
     fn from(toml: MemoriesToml) -> Self {
         let defaults = Self::default();
         Self {
+            model_provider: toml.model_provider,
             version: toml.version.unwrap_or(defaults.version),
             dual_write: toml.dual_write.unwrap_or(defaults.dual_write),
             disable_on_external_context: toml

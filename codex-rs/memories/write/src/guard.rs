@@ -13,6 +13,11 @@ pub(crate) async fn rate_limits_ok(auth_manager: &AuthManager, config: &Config) 
 }
 
 async fn rate_limits_check(auth_manager: &AuthManager, config: &Config) -> Option<bool> {
+    // A separate background provider has its own admission control. Never ask
+    // the foreground account's backend to authorize a local memory request.
+    if config.memories.model_provider.is_some() {
+        return None;
+    }
     let auth = auth_manager.auth().await?;
     if !auth.uses_codex_backend() {
         return None;
