@@ -7,6 +7,7 @@
 
 pub mod catalog;
 pub mod controller;
+pub mod logo;
 pub mod model;
 pub mod version;
 
