@@ -415,3 +415,21 @@ fn onboarding_keeps_full_color_after_budget_and_pause() {
         },
     );
 }
+
+#[test]
+fn first_screen_preserves_depth_in_glyphs_without_a_palette_probe() {
+    let area = Rect::new(0, 0, 80, 40);
+    let mut buffer = Buffer::empty(area);
+    let mut animation = EmptyStateAnimation::default();
+    animation.start_fresh();
+    animation.set_test_phase(0.125);
+    animation.render_first_screen(
+        area,
+        &mut buffer,
+        Some(ComposerState::Empty),
+        MotionMode::Animated,
+    );
+    let glyphs: String = buffer.content.iter().map(|c| c.symbol()).collect();
+    assert!(glyphs.contains('█'));
+    assert!(glyphs.contains('▒'));
+}

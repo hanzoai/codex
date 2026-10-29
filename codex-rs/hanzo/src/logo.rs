@@ -9,6 +9,9 @@ pub const MAX_ROWS: u16 = 24;
 pub const LOOP_SECONDS: f64 = 7.2;
 const PITCH: f64 = 2.0 / 6.0;
 const GAP: f64 = 0.05;
+const DOT_THRESHOLDS: [f64; 8] = [
+    0.0625, 0.5625, 0.8125, 0.3125, 0.4375, 0.9375, 0.6875, 0.1875,
+];
 const DOT_BITS: [u8; 8] = [1, 8, 2, 16, 4, 32, 64, 128];
 type Point = [f64; 2];
 
@@ -230,10 +233,12 @@ impl Lighting {
             ink: (f64::from(fg.0) + f64::from(fg.1) + f64::from(fg.2)) / 3.0,
         }
     }
+    fn strength(n: [f64; 3]) -> f64 {
+        0.13 + 0.87 * dot(n, [-0.45, -0.55, 0.70]).max(0.0)
+    }
     fn shade(&self, n: [f64; 3]) -> u32 {
         // SVG Y points down: the fixed key light is above and left.
-        let diffuse = dot(n, [-0.45, -0.55, 0.70]).max(0.0);
-        let strength = 0.30 + 0.70 * diffuse;
+        let strength = 0.25 + 0.75 * Self::strength(n);
         let [r, g, b] = self
             .background
             .map(|bg| (bg + (self.ink - bg) * strength).round().clamp(0.0, 255.0) as u8);
@@ -244,6 +249,26 @@ impl Lighting {
 pub struct Cell {
     pub dots: u8,
     pub rgb: u32,
+    shade: u8,
+    edge_dots: u8,
+}
+impl Cell {
+    /// Surface density carries lighting even with NO_COLOR or an unknown palette.
+    /// Partial cells retain sub-cell silhouettes rather than filling their gaps.
+    pub fn glyph(&self) -> char {
+        if self.dots == 255 {
+            match self.shade {
+                0..=5 => '░',
+                6..=12 => '▒',
+                13..=18 => '▓',
+                _ => '█',
+            }
+        } else if self.edge_dots == 0 {
+            ' '
+        } else {
+            char::from_u32(0x2800 + u32::from(self.edge_dots)).unwrap_or(' ')
+        }
+    }
 }
 #[derive(Default)]
 pub struct Renderer {
@@ -255,6 +280,7 @@ impl Renderer {
         let (cols, rows) = (usize::from(columns), usize::from(rows));
         self.cells.resize(cols * rows, Cell::default());
         self.cells.fill(Cell::default());
+        let mut strengths = vec![0.0; cols * rows];
         let mut totals = vec![[0_u32; 3]; cols * rows];
         if cols == 0 || rows == 0 {
             return &self.cells;
@@ -283,7 +309,10 @@ impl Renderer {
                     }
                 }
                 if let Some(n) = hit {
-                    let color = light.shade([n[0] * c + n[2] * s, n[1], -n[0] * s + n[2] * c]);
+                    let normal = [n[0] * c + n[2] * s, n[1], -n[0] * s + n[2] * c];
+                    let color = light.shade(normal);
+                    let strength = Lighting::strength(normal);
+                    strengths[(dy / 4) * cols + dx / 2] += strength;
                     let cell = &mut self.cells[(dy / 4) * cols + dx / 2];
                     // Average only covered dots; empty gaps retain the terminal background.
                     let [_, r, g, b] = color.to_be_bytes();
@@ -291,15 +320,20 @@ impl Renderer {
                     for (sum, value) in total.iter_mut().zip([r, g, b]) {
                         *sum += u32::from(value);
                     }
-                    cell.dots |= DOT_BITS[(dy % 4) * 2 + dx % 2];
+                    let dot = (dy % 4) * 2 + dx % 2;
+                    cell.dots |= DOT_BITS[dot];
+                    if strength >= DOT_THRESHOLDS[dot] {
+                        cell.edge_dots |= DOT_BITS[dot];
+                    }
                 }
             }
         }
-        for (cell, total) in self.cells.iter_mut().zip(totals) {
+        for ((cell, total), strength) in self.cells.iter_mut().zip(totals).zip(strengths) {
             let count = cell.dots.count_ones();
             if count > 0 {
                 let [r, g, b] = total.map(|v| (v / count) as u8);
                 cell.rgb = u32::from_be_bytes([0, r, g, b]);
+                cell.shade = (strength / f64::from(count) * 23.0).round() as u8;
             }
         }
         &self.cells
@@ -310,6 +344,28 @@ impl Renderer {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monochrome_keeps_lit_faces_distinct_without_changing_geometry() {
+        let mut renderer = Renderer::default();
+        let dark = Lighting::terminal((230, 230, 230), (0, 0, 0));
+        let light = Lighting::terminal((32, 32, 32), (250, 250, 250));
+        let a = renderer.frame(60, 21, 0.125, &dark).to_vec();
+        let b = renderer.frame(60, 21, 0.125, &light);
+        assert_eq!(
+            a.iter().map(Cell::glyph).collect::<String>(),
+            b.iter().map(Cell::glyph).collect::<String>()
+        );
+        let glyphs: String = a.iter().map(Cell::glyph).collect();
+        assert!(glyphs.contains('█'));
+        assert!(glyphs.contains('▒'));
+        assert!(a.iter().filter(|c| c.dots == 0).all(|c| c.glyph() == ' '));
+        assert!(
+            a.iter()
+                .filter(|c| c.dots != 255)
+                .all(|c| c.edge_dots & !c.dots == 0)
+        );
+    }
 
     fn inside(p: Point, polygon: &[Point]) -> bool {
         let mut result = false;
