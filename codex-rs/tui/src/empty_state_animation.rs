@@ -269,7 +269,7 @@ impl EmptyStateAnimation {
                 area.x + i as u16 % area.width,
                 area.y + i as u16 / area.width,
             )];
-            target.set_char(char::from_u32(0x2800 + u32::from(cell.dots)).unwrap_or(' '));
+            target.set_char(cell.glyph());
             let color = crate::color::blend((r, g, b), background, opacity);
             let color = if color_level == terminal_palette::StdoutColorLevel::Ansi256 {
                 // Four bits per channel bound the cache and avoid palette searches each frame.
