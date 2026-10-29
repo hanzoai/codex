@@ -686,6 +686,35 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
     updates
 }
 
+// The product disables crossterm colors globally for its monochrome UI. Logo
+// lighting is explicit terminal ink, already capability/NO_COLOR gated by the
+// renderer. Emit only that foreground here, without enabling other UI colors.
+fn queue_logo_ink(
+    writer: &mut impl Write,
+    cell: &ratatui::buffer::Cell,
+    fg: &mut Color,
+) -> io::Result<()> {
+    let ink = if cell
+        .symbol()
+        .chars()
+        .next()
+        .is_some_and(|c| ('\u{2801}'..='\u{28ff}').contains(&c))
+    {
+        cell.fg
+    } else {
+        Color::Reset
+    };
+    if ink != *fg {
+        match ink {
+            Color::Rgb(r, g, b) => write!(writer, "\x1b[38;2;{r};{g};{b}m")?,
+            Color::Indexed(index) => write!(writer, "\x1b[38;5;{index}m")?,
+            _ => writer.write_all(b"\x1b[39m")?,
+        }
+        *fg = ink;
+    }
+    Ok(())
+}
+
 fn draw<I>(writer: &mut impl Write, commands: I) -> io::Result<()>
 where
     I: Iterator<Item = DrawCommand>,
@@ -726,6 +755,9 @@ where
                     diff.queue(writer)?;
                     modifier = cell.modifier;
                 }
+                if !color_enabled && hanzo::MONOCHROME {
+                    queue_logo_ink(writer, cell, &mut fg)?;
+                }
                 if color_enabled && (cell.fg != fg || cell.bg != bg) {
                     queue!(
                         writer,
@@ -745,6 +777,10 @@ where
                 queue!(writer, Print(symbol))?;
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
+                if !color_enabled && hanzo::MONOCHROME && fg != Color::Reset {
+                    writer.write_all(b"\x1b[39m")?;
+                    fg = Color::Reset;
+                }
                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
                 modifier = Modifier::empty();
                 queue!(writer, SetBackgroundColor((*clear_bg).into_crossterm()))?;
@@ -760,6 +796,9 @@ where
         queue!(writer, Print("\x1b]8;;\x07"))?;
     }
 
+    if !color_enabled && hanzo::MONOCHROME && fg != Color::Reset {
+        writer.write_all(b"\x1b[39m")?;
+    }
     queue!(
         writer,
         SetForegroundColor(crossterm::style::Color::Reset),
@@ -1436,5 +1475,31 @@ mod tests {
             actual.contains(&expected),
             "expected terminal output to contain cursor style reset {expected:?}, got {actual:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod logo_ink_tests {
+    use super::*;
+    #[test]
+    fn empty_state_animation_ink_survives_monochrome_without_leaking() -> io::Result<()> {
+        let mut cell = ratatui::buffer::Cell::default();
+        let mut fg = Color::Reset;
+        let mut out = Vec::new();
+        cell.set_char('⣿').set_fg(Color::Rgb(120, 120, 120));
+        queue_logo_ink(&mut out, &cell, &mut fg)?;
+        assert_eq!(out, b"\x1b[38;2;120;120;120m");
+        out.clear();
+        cell.set_char('x').set_fg(Color::Red);
+        queue_logo_ink(&mut out, &cell, &mut fg)?;
+        assert_eq!(out, b"\x1b[39m");
+        out.clear();
+        cell.set_char('⣿').set_fg(Color::Reset);
+        queue_logo_ink(&mut out, &cell, &mut fg)?;
+        assert!(out.is_empty(), "NO_COLOR/default ink must not emit color");
+        cell.set_fg(Color::Indexed(245));
+        queue_logo_ink(&mut out, &cell, &mut fg)?;
+        assert_eq!(out, b"\x1b[38;5;245m");
+        Ok(())
     }
 }
