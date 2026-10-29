@@ -7,7 +7,10 @@
 
 use std::f64::consts::TAU;
 
-use super::geometry::{EXTENT, FIELDS, GRID, STEP};
+use super::geometry::EXTENT;
+use super::geometry::FIELDS;
+use super::geometry::GRID;
+use super::geometry::STEP;
 use super::lighting::Lighting;
 
 pub(super) const MAX_COLUMNS: u16 = 60;
@@ -22,9 +25,7 @@ const HIT_EPSILON: f64 = 0.006;
 fn mark_distance(x: f64, y: f64) -> f64 {
     let fx = (x + EXTENT) / STEP;
     let fy = (y + EXTENT) / STEP;
-    if !(0.0..(GRID - 1) as f64).contains(&fx)
-        || !(0.0..(GRID - 1) as f64).contains(&fy)
-    {
+    if !(0.0..(GRID - 1) as f64).contains(&fx) || !(0.0..(GRID - 1) as f64).contains(&fy) {
         return -1.0;
     }
     let ix = fx.floor() as usize;
@@ -45,10 +46,8 @@ fn outward_normal(p: [f64; 3]) -> [f64; 3] {
         return [0.0, 0.0, if p[2] >= 0.0 { 1.0 } else { -1.0 }];
     }
     let epsilon = STEP;
-    let nx = mark_distance(p[0] - epsilon, p[1])
-        - mark_distance(p[0] + epsilon, p[1]);
-    let ny = mark_distance(p[0], p[1] - epsilon)
-        - mark_distance(p[0], p[1] + epsilon);
+    let nx = mark_distance(p[0] - epsilon, p[1]) - mark_distance(p[0] + epsilon, p[1]);
+    let ny = mark_distance(p[0], p[1] - epsilon) - mark_distance(p[0], p[1] + epsilon);
     let magnitude = nx.hypot(ny).max(1e-9);
     [nx / magnitude, ny / magnitude, 0.0]
 }
@@ -211,7 +210,12 @@ mod tests {
         let last = renderer.frame(60, 21, 1.0, &light).to_vec();
         assert_eq!(first, last);
         assert!(first.iter().any(|c| c.dots != 0));
-        assert!(renderer.frame(60, 21, 0.25, &light).iter().any(|c| c.dots != 0));
+        assert!(
+            renderer
+                .frame(60, 21, 0.25, &light)
+                .iter()
+                .any(|c| c.dots != 0)
+        );
     }
 
     #[test]

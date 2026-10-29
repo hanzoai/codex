@@ -1,5 +1,5 @@
-//! The blossom welcome animation for onboarding, with a full-color final pose.
-//! Visible time pauses while hidden. Fresh conversations start settled and can replay on a click.
+//! The Hanzo welcome animation for onboarding and fresh conversations.
+//! Visible time pauses while hidden; first-screen motion stops on interaction.
 
 mod geometry;
 mod lighting;
@@ -29,8 +29,6 @@ use renderer::MAX_ROWS;
 use renderer::Renderer;
 
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(/*millis*/ 50);
-// The preview's first visible pose (10.8s / 7.2s), also the start of an idle-screen replay.
-const SETTLED_BLOSSOM: f64 = 0.5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComposerState {
@@ -206,11 +204,14 @@ impl EmptyStateAnimation {
             self.cancel_replay();
             return None;
         }
-        let max_width = buffer.area.width.saturating_sub(4)
+        let max_width = buffer
+            .area
+            .width
+            .saturating_sub(4)
             .min(available.width)
             .min(MAX_COLUMNS);
-        let width_for_height = (u32::from(available.height) * u32::from(MAX_COLUMNS)
-            / u32::from(IDEAL_ROWS)) as u16;
+        let width_for_height =
+            (u32::from(available.height) * u32::from(MAX_COLUMNS) / u32::from(IDEAL_ROWS)) as u16;
         let width = max_width.min(width_for_height);
         let height = width * IDEAL_ROWS / MAX_COLUMNS;
         if height < MIN_STAGE_ROWS || height > available.height {

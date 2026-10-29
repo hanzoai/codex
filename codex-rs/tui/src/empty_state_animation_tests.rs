@@ -13,12 +13,17 @@ fn first_screen_fits_80_columns_and_short_viewports() {
     for header_rows in [5, 7, 11] {
         buffer.reset();
         let free = Rect::new(
-            screen.x, screen.y + header_rows, screen.width,
+            screen.x,
+            screen.y + header_rows,
+            screen.width,
             screen.height - header_rows - 3,
         );
         assert_eq!(
             animation.render_first_screen(
-                free, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated,
+                free,
+                &mut buffer,
+                Some(ComposerState::Empty),
+                MotionMode::Animated,
             ),
             Some(FRAME_INTERVAL),
         );
@@ -36,7 +41,10 @@ fn first_screen_fits_80_columns_and_short_viewports() {
     let mut buffer = Buffer::empty(screen);
     assert_eq!(
         animation.render_first_screen(
-            free, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated,
+            free,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Animated,
         ),
         Some(FRAME_INTERVAL),
     );
@@ -55,7 +63,10 @@ fn first_screen_fits_80_columns_and_short_viewports() {
     let mut buffer = Buffer::empty(screen);
     assert_eq!(
         animation.render_first_screen(
-            screen, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated,
+            screen,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Animated,
         ),
         None,
     );
@@ -73,7 +84,12 @@ fn first_screen_spins_until_interaction_then_stays_static() {
         animation.render_first_screen(screen, buffer, composer, motion)
     };
     assert_eq!(
-        draw(&mut animation, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated),
+        draw(
+            &mut animation,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Animated
+        ),
         Some(FRAME_INTERVAL),
     );
     let stage = animation.stage.unwrap();
@@ -86,28 +102,50 @@ fn first_screen_spins_until_interaction_then_stays_static() {
         modifiers: KeyModifiers::NONE,
     };
     assert!(!animation.handle_mouse(MouseEvent {
-        column: 0, row: 0, ..click
+        column: 0,
+        row: 0,
+        ..click
     }));
     // The click is not stolen from the composer and permanently stops idle motion.
     assert!(!animation.handle_mouse(click));
     assert!(animation.interacted);
     assert_eq!(
-        draw(&mut animation, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated),
+        draw(
+            &mut animation,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Animated
+        ),
         None,
     );
     let stopped = buffer.clone();
     assert_eq!(
-        draw(&mut animation, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated),
+        draw(
+            &mut animation,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Animated
+        ),
         None,
     );
     assert_eq!(buffer, stopped);
     assert_eq!(
-        draw(&mut animation, &mut buffer, Some(ComposerState::Draft), MotionMode::Animated),
+        draw(
+            &mut animation,
+            &mut buffer,
+            Some(ComposerState::Draft),
+            MotionMode::Animated
+        ),
         None,
     );
     assert_eq!(buffer, Buffer::empty(screen));
     assert_eq!(
-        draw(&mut animation, &mut buffer, Some(ComposerState::Empty), MotionMode::Animated),
+        draw(
+            &mut animation,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Animated
+        ),
         None,
     );
     assert_eq!(buffer, stopped);
@@ -115,7 +153,12 @@ fn first_screen_spins_until_interaction_then_stays_static() {
     // Disabling motion shows a legible static logo, never a running animation.
     animation.start_fresh();
     assert_eq!(
-        draw(&mut animation, &mut buffer, Some(ComposerState::Empty), MotionMode::Reduced),
+        draw(
+            &mut animation,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Reduced
+        ),
         None,
     );
     assert!(buffer.content.iter().any(|c| c.symbol() != " "));
