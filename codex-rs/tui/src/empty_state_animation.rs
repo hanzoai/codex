@@ -49,6 +49,8 @@ pub(crate) struct EmptyStateAnimation {
     replaying: bool,
     // Once the user starts interacting, only the static mark is allowed.
     interacted: bool,
+    mouse_tilt: hanzo::logo::MouseTilt,
+    tilt: hanzo::logo::Tilt,
 }
 
 impl EmptyStateAnimation {
@@ -66,6 +68,8 @@ impl EmptyStateAnimation {
         self.cancel_replay();
         self.eligible = true;
         self.interacted = false;
+        self.mouse_tilt = hanzo::logo::MouseTilt::default();
+        self.tilt = hanzo::logo::Tilt::default();
         self.spin_elapsed = Duration::ZERO;
         self.last_frame = None;
         self.fade_elapsed = Duration::ZERO;
@@ -100,6 +104,15 @@ impl EmptyStateAnimation {
             .stage
             .is_some_and(|stage| stage.contains(Position::new(mouse.column, mouse.row)))
             && mouse.modifiers.is_empty();
+        if mouse.kind == MouseEventKind::Moved
+            && !self.interacted
+            && let Some(stage) = self.stage
+        {
+            self.mouse_tilt.point(
+                (f64::from(mouse.column) - f64::from(stage.x)) * 2.0 / f64::from(stage.width) - 1.0,
+                (f64::from(mouse.row) - f64::from(stage.y)) * 2.0 / f64::from(stage.height) - 1.0,
+            );
+        }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && inside {
             self.interacted = true;
             self.cancel_replay();
@@ -236,12 +249,15 @@ impl EmptyStateAnimation {
         self.stage = Some(stage);
         if self.interacted || motion == MotionMode::Reduced {
             self.pause_clock();
+            self.tilt = hanzo::logo::Tilt::default();
             self.paint_frame(stage, buffer, /*phase*/ 0.0, /*opacity*/ 1.0);
             return None;
         }
         let now = Instant::now();
         if let Some(last) = self.last_frame.replace(now) {
-            self.spin_elapsed += now.saturating_duration_since(last);
+            let elapsed = now.saturating_duration_since(last);
+            self.spin_elapsed += elapsed;
+            self.tilt = self.mouse_tilt.advance(elapsed);
         }
         let phase = (self.spin_elapsed.as_secs_f64() / sequence::LOOP_SECONDS).fract();
         self.paint_frame(stage, buffer, phase, /*opacity*/ 1.0);
@@ -257,12 +273,10 @@ impl EmptyStateAnimation {
             terminal_palette::default_fg().unwrap_or((210, 221, 235)),
             background,
         );
-        let cells = self.renderer.get_or_insert_with(Renderer::default).frame(
-            area.width,
-            area.height,
-            phase,
-            &light,
-        );
+        let cells = self
+            .renderer
+            .get_or_insert_with(Renderer::default)
+            .frame_with_tilt(area.width, area.height, phase, self.tilt, &light);
         for (i, cell) in cells.iter().enumerate().filter(|(_, cell)| cell.dots != 0) {
             let [_, r, g, b] = cell.rgb.to_be_bytes();
             let target = &mut buffer[(

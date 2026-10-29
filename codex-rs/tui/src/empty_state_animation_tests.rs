@@ -433,3 +433,46 @@ fn first_screen_preserves_depth_in_glyphs_without_a_palette_probe() {
     assert!(glyphs.contains('█'));
     assert!(glyphs.contains('▒'));
 }
+
+#[test]
+fn mouse_steers_both_axes_without_dismissing_and_reduced_motion_stays_still() {
+    let mut animation = EmptyStateAnimation::default();
+    animation.start_fresh();
+    let screen = Rect::new(0, 0, 80, 40);
+    let mut buffer = Buffer::empty(screen);
+    animation.render_first_screen(
+        screen,
+        &mut buffer,
+        Some(ComposerState::Empty),
+        MotionMode::Animated,
+    );
+    let stage = animation.stage.unwrap();
+    assert!(!animation.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: stage.right() - 1,
+        row: stage.y,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert!(!animation.interacted);
+    animation.last_frame = Some(Instant::now() - Duration::from_millis(100));
+    buffer.reset();
+    animation.render_first_screen(
+        screen,
+        &mut buffer,
+        Some(ComposerState::Empty),
+        MotionMode::Animated,
+    );
+    assert!(animation.tilt.x > 0.0 && animation.tilt.y > 0.0);
+    assert!(animation.spin_elapsed > Duration::ZERO);
+    buffer.reset();
+    assert_eq!(
+        animation.render_first_screen(
+            screen,
+            &mut buffer,
+            Some(ComposerState::Empty),
+            MotionMode::Reduced
+        ),
+        None
+    );
+    assert_eq!(animation.tilt, hanzo::logo::Tilt::default());
+}

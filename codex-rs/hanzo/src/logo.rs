@@ -7,8 +7,40 @@ use std::sync::LazyLock;
 pub const MAX_COLUMNS: u16 = 60;
 pub const MAX_ROWS: u16 = 24;
 pub const LOOP_SECONDS: f64 = 7.2;
+/// Small, rigid mouse-controlled angles in radians; independent of the idle spin.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tilt {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Shared pointer response for the welcome screen and native idle player.
+#[derive(Default)]
+pub struct MouseTilt {
+    current: Tilt,
+    target: Tilt,
+}
+impl MouseTilt {
+    pub fn point(&mut self, horizontal: f64, vertical: f64) {
+        self.target = Tilt {
+            x: -vertical.clamp(-1.0, 1.0) * 0.18,
+            y: horizontal.clamp(-1.0, 1.0) * 0.22,
+        };
+    }
+
+    pub fn advance(&mut self, elapsed: std::time::Duration) -> Tilt {
+        // Exponential easing is independent of pointer event/frame frequency.
+        let weight = 1.0 - (-elapsed.as_secs_f64() / 0.22).exp();
+        self.current.x += (self.target.x - self.current.x) * weight;
+        self.current.y += (self.target.y - self.current.y) * weight;
+        self.current
+    }
+}
+
 const PITCH: f64 = 2.0 / 6.0;
-const GAP: f64 = 0.05;
+const GAP: f64 = 0.02;
+const BEVEL: f64 = 0.012;
+const CAMERA_DISTANCE: f64 = 4.8;
 const DOT_THRESHOLDS: [f64; 8] = [
     0.0625, 0.5625, 0.8125, 0.3125, 0.4375, 0.9375, 0.6875, 0.1875,
 ];
@@ -175,7 +207,7 @@ fn mesh() -> Vec<Cubelet> {
                             let normal = std::array::from_fn(|i| {
                                 (a.normal[i] + b.normal[i]) / std::f64::consts::SQRT_2
                             });
-                            let offset = (a.offset + b.offset - 0.04) / std::f64::consts::SQRT_2;
+                            let offset = (a.offset + b.offset - BEVEL) / std::f64::consts::SQRT_2;
                             planes.push(Plane { normal, offset });
                         }
                     }
@@ -221,6 +253,19 @@ fn intersect(piece: &Cubelet, origin: [f64; 3], direction: [f64; 3]) -> Option<(
     Some((near, normal))
 }
 
+fn camera_ray(x: f64, y: f64, sin_y: f64, cos_y: f64) -> ([f64; 3], [f64; 3]) {
+    let front_distance = CAMERA_DISTANCE - (PITCH - GAP) / 2.0;
+    let world_direction = [x / front_distance, y / front_distance, -1.0];
+    (
+        [-sin_y * CAMERA_DISTANCE, 0.0, cos_y * CAMERA_DISTANCE],
+        [
+            cos_y * world_direction[0] - sin_y * world_direction[2],
+            world_direction[1],
+            sin_y * world_direction[0] + cos_y * world_direction[2],
+        ],
+    )
+}
+
 /// Terminal palette conversion is shared by both callers.
 pub struct Lighting {
     background: [f64; 3],
@@ -234,7 +279,7 @@ impl Lighting {
         }
     }
     fn strength(n: [f64; 3]) -> f64 {
-        0.13 + 0.87 * dot(n, [-0.45, -0.55, 0.70]).max(0.0)
+        0.13 + 0.87 * dot(n, [-0.25, -0.80, 0.55]).max(0.0)
     }
     fn shade(&self, n: [f64; 3]) -> u32 {
         // SVG Y points down: the fixed key light is above and left.
@@ -276,6 +321,17 @@ pub struct Renderer {
 }
 impl Renderer {
     pub fn frame(&mut self, columns: u16, rows: u16, phase: f64, light: &Lighting) -> &[Cell] {
+        self.frame_with_tilt(columns, rows, phase, Tilt::default(), light)
+    }
+
+    pub fn frame_with_tilt(
+        &mut self,
+        columns: u16,
+        rows: u16,
+        phase: f64,
+        tilt: Tilt,
+        light: &Lighting,
+    ) -> &[Cell] {
         assert!(columns <= MAX_COLUMNS && rows <= MAX_ROWS);
         let (cols, rows) = (usize::from(columns), usize::from(rows));
         self.cells.resize(cols * rows, Cell::default());
@@ -286,18 +342,30 @@ impl Renderer {
             return &self.cells;
         }
         // Equal world scale on both axes, including narrow terminal resizes.
-        let pitch = (2.65 / (rows * 4) as f64).max(2.65 / (cols * 2) as f64);
-        let (s, c) = (phase.rem_euclid(1.0) * TAU).sin_cos();
-        let direction = [s, 0.0, -c];
+        let pitch = (2.9 / (rows * 4) as f64).max(2.9 / (cols * 2) as f64);
+        let (s, c) = (phase.rem_euclid(1.0) * TAU + tilt.y.clamp(-0.22, 0.22)).sin_cos();
+        let (sx, cx) = tilt.x.clamp(-0.18, 0.18).sin_cos();
+        // A fixed perspective camera reveals top/bottom faces as well as sides.
+        // Calibrate the front cap plane to the canonical face-on XY coordinates.
+        let front_distance = CAMERA_DISTANCE - (PITCH - GAP) / 2.0;
         for dy in 0..rows * 4 {
             let y = (dy as f64 + 0.5 - (rows * 2) as f64) * pitch;
+            // Perspective rays change Y with depth; bound every depth along the
+            // sculpture before selecting candidate cubelets for this scanline.
+            let y0 = y * (CAMERA_DISTANCE - 1.1) / front_distance;
+            let y1 = y * (CAMERA_DISTANCE + 1.1) / front_distance;
             let candidates: Vec<_> = MESH
                 .iter()
-                .filter(|p| y >= p.low_y && y <= p.high_y)
+                .filter(|p| {
+                    let margin = sx.abs() * 1.6;
+                    p.high_y >= cx * y0.min(y1) - margin && p.low_y <= cx * y0.max(y1) + margin
+                })
                 .collect();
             for dx in 0..cols * 2 {
                 let x = (dx as f64 + 0.5 - cols as f64) * pitch;
-                let origin = [c * x - s * 4.5, y, s * x + c * 4.5];
+                let (origin, direction) = camera_ray(x, y, s, c);
+                let inverse_x = |v: [f64; 3]| [v[0], cx * v[1] + sx * v[2], -sx * v[1] + cx * v[2]];
+                let (origin, direction) = (inverse_x(origin), inverse_x(direction));
                 let mut closest = 10.0;
                 let mut hit = None;
                 for piece in &candidates {
@@ -309,6 +377,7 @@ impl Renderer {
                     }
                 }
                 if let Some(n) = hit {
+                    let n = [n[0], cx * n[1] - sx * n[2], sx * n[1] + cx * n[2]];
                     let normal = [n[0] * c + n[2] * s, n[1], -n[0] * s + n[2] * c];
                     let color = light.shade(normal);
                     let strength = Lighting::strength(normal);
@@ -346,6 +415,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mouse_tilt_is_bounded_eased_and_frame_rate_independent() {
+        use std::time::Duration;
+        let mut slow = MouseTilt::default();
+        let mut fast = MouseTilt::default();
+        slow.point(100.0, -100.0);
+        fast.point(1.0, -1.0);
+        let first = slow.advance(Duration::from_millis(20));
+        assert!(first.x > 0.0 && first.x < 0.18);
+        slow.advance(Duration::from_millis(980));
+        for _ in 0..50 {
+            fast.advance(Duration::from_millis(20));
+        }
+        assert!((slow.current.x - fast.current.x).abs() < 1e-12);
+        assert!((slow.current.y - fast.current.y).abs() < 1e-12);
+        let mut renderer = Renderer::default();
+        let light = Lighting::terminal((230, 230, 230), (0, 0, 0));
+        for (width, height) in [(40, 14), (56, 19), (60, 21)] {
+            for x in [-0.18, 0.18] {
+                for y in [-0.22, 0.22] {
+                    for step in 0..72 {
+                        let cells = renderer.frame_with_tilt(
+                            width,
+                            height,
+                            f64::from(step) / 72.0,
+                            Tilt { x, y },
+                            &light,
+                        );
+                        let w = usize::from(width);
+                        assert!(
+                            cells[..w]
+                                .iter()
+                                .chain(&cells[cells.len() - w..])
+                                .all(|c| c.dots == 0)
+                        );
+                        assert!(
+                            cells
+                                .chunks(w)
+                                .all(|row| row[0].dots == 0 && row[w - 1].dots == 0)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn monochrome_keeps_lit_faces_distinct_without_changing_geometry() {
         let mut renderer = Renderer::default();
         let dark = Lighting::terminal((230, 230, 230), (0, 0, 0));
@@ -365,6 +480,51 @@ mod tests {
                 .filter(|c| c.dots != 255)
                 .all(|c| c.edge_dots & !c.dots == 0)
         );
+    }
+
+    #[test]
+    fn fixed_perspective_reveals_three_cubical_faces() {
+        let mut faces = [false; 3];
+        for row in 0..80 {
+            for col in 0..80 {
+                let (origin, direction) = camera_ray(
+                    (f64::from(col) + 0.5) / 40.0 - 1.0,
+                    (f64::from(row) + 0.5) / 40.0 - 1.0,
+                    0.0,
+                    1.0,
+                );
+                if let Some((_, n)) = MESH
+                    .iter()
+                    .filter_map(|piece| intersect(piece, origin, direction))
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                {
+                    for axis in 0..3 {
+                        faces[axis] |= n[axis].abs() > 0.99;
+                    }
+                }
+            }
+        }
+        assert!(
+            faces.into_iter().all(|visible| visible),
+            "front, side and top/bottom faces must all be visible"
+        );
+        // Only the object's inverse Y transform changes: the camera and rays
+        // remain fixed in world space for every pose.
+        for step in 0..72 {
+            let (s, c) = (f64::from(step) / 72.0 * TAU).sin_cos();
+            let (o, d) = camera_ray(0.6, -0.7, s, c);
+            let world_o = [c * o[0] + s * o[2], o[1], -s * o[0] + c * o[2]];
+            let world_d = [c * d[0] + s * d[2], d[1], -s * d[0] + c * d[2]];
+            assert!(world_o[0].abs() < 1e-9 && world_o[1].abs() < 1e-9);
+            assert!((world_o[2] - CAMERA_DISTANCE).abs() < 1e-9);
+            let distance = CAMERA_DISTANCE - (PITCH - GAP) / 2.0;
+            for (a, b) in world_d
+                .into_iter()
+                .zip([0.6 / distance, -0.7 / distance, -1.0])
+            {
+                assert!((a - b).abs() < 1e-9);
+            }
+        }
     }
 
     fn inside(p: Point, polygon: &[Point]) -> bool {
@@ -460,7 +620,7 @@ mod tests {
         for (cols, rows) in [(40, 14), (60, 21), (1, 1), (0, 0)] {
             let front = renderer.frame(cols, rows, 0.0, &dark).to_vec();
             assert_eq!(front, renderer.frame(cols, rows, 1.0, &dark));
-            for phase in [0.0, 0.125, 0.25, 0.5, 0.75] {
+            for phase in (0..72).map(|step| f64::from(step) / 72.0) {
                 let frame = renderer.frame(cols, rows, phase, &dark).to_vec();
                 assert_eq!(frame.len(), usize::from(cols) * usize::from(rows));
                 assert_eq!(
