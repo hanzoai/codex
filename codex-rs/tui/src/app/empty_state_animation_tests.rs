@@ -352,3 +352,34 @@ async fn empty_state_animation_survives_plain_transcript_clicks() -> Result<()> 
     tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
 }
+
+#[tokio::test]
+async fn empty_state_animation_cubelets_at_terminal_sizes() -> Result<()> {
+    for height in [24, 40] {
+        let mut app = crate::app::test_support::make_test_app().await;
+        app.local_settings.tui.animations = true;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        tui.set_owned_screen(true)?;
+        app.queue_clear_ui_header(&mut tui);
+        for (name, phase) in [("front", 0.0), ("45", 0.125), ("side", 0.25), ("back", 0.5)] {
+            {
+                let mut animation = app.chat_widget.empty_state_animation.borrow_mut();
+                animation.start_fresh();
+                animation.set_test_phase(phase);
+            }
+            draw(&mut app, &mut tui, Size::new(80, height))?;
+            assert!(has_blossom(&tui));
+            let buffer = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
+            let rendered = text(buffer);
+            assert!(
+                rendered
+                    .lines()
+                    .all(|line| unicode_width::UnicodeWidthStr::width(line) <= 80)
+            );
+            assert!(rendered.contains("Ask Hanzo Dev"));
+            insta::assert_snapshot!(format!("cubelets_80x{height}_{name}"), rendered);
+        }
+        tui.set_owned_screen(false)?;
+    }
+    Ok(())
+}

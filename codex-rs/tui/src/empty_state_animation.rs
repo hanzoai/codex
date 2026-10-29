@@ -1,7 +1,6 @@
 //! The Hanzo welcome animation for onboarding and fresh conversations.
 //! Visible time pauses while hidden; first-screen motion stops on interaction.
 
-mod geometry;
 mod lighting;
 mod policy;
 mod renderer;
@@ -53,6 +52,12 @@ pub(crate) struct EmptyStateAnimation {
 }
 
 impl EmptyStateAnimation {
+    #[cfg(test)]
+    pub(crate) fn set_test_phase(&mut self, phase: f64) {
+        self.spin_elapsed = Duration::from_secs_f64(phase * sequence::LOOP_SECONDS);
+        self.last_frame = None;
+    }
+
     pub(crate) fn is_eligible(&self) -> bool {
         self.eligible
     }
@@ -245,11 +250,8 @@ impl EmptyStateAnimation {
 
     fn paint_frame(&mut self, area: Rect, buffer: &mut Buffer, phase: f64, opacity: f32) {
         let background = terminal_palette::default_bg();
-        let color_level = if background.is_some() {
-            terminal_palette::effective_stdout_color_level()
-        } else {
-            terminal_palette::StdoutColorLevel::Unknown
-        };
+        // Color capability does not depend on whether the terminal answered OSC 11.
+        let color_level = terminal_palette::effective_stdout_color_level();
         let background = background.unwrap_or((15, 20, 37));
         let light = Lighting::terminal(
             terminal_palette::default_fg().unwrap_or((210, 221, 235)),
