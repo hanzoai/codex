@@ -175,7 +175,8 @@ impl Renderer {
                     let dx = col * 2 + point % 2;
                     let dy = row * 4 + point / 2;
                     let x = (dx as f64 + 0.5 - dot_cols as f64 * 0.5) * world_per_dot;
-                    let y = (dot_rows as f64 * 0.5 - dy as f64 - 0.5) * world_per_dot;
+                    // SVG Y coordinates run downward from the top of the mark.
+                    let y = (dy as f64 + 0.5 - dot_rows as f64 * 0.5) * world_per_dot;
                     if let Some(color) = hit_color(x, y, yaw, light) {
                         dots |= bit;
                         let channels = color.to_be_bytes();
