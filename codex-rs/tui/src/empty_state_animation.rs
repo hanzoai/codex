@@ -1,5 +1,5 @@
-//! The blossom welcome animation for onboarding, with a full-color final pose.
-//! Visible time pauses while hidden. Fresh conversations start settled and can replay on a click.
+//! The Hanzo welcome animation for onboarding and fresh conversations.
+//! Visible time pauses while hidden; first-screen motion stops on interaction.
 
 mod geometry;
 mod lighting;
@@ -29,8 +29,6 @@ use renderer::MAX_ROWS;
 use renderer::Renderer;
 
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(/*millis*/ 50);
-// The preview's first visible pose (10.8s / 7.2s), also the start of an idle-screen replay.
-const SETTLED_BLOSSOM: f64 = 0.5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComposerState {
@@ -50,6 +48,8 @@ pub(crate) struct EmptyStateAnimation {
     renderer: Option<Renderer>,
     stage: Option<Rect>,
     replaying: bool,
+    // Once the user starts interacting, only the static mark is allowed.
+    interacted: bool,
 }
 
 impl EmptyStateAnimation {
@@ -60,6 +60,7 @@ impl EmptyStateAnimation {
     pub(crate) fn start_fresh(&mut self) {
         self.cancel_replay();
         self.eligible = true;
+        self.interacted = false;
         self.spin_elapsed = Duration::ZERO;
         self.last_frame = None;
         self.fade_elapsed = Duration::ZERO;
@@ -87,24 +88,18 @@ impl EmptyStateAnimation {
         self.pause_clock();
     }
 
-    /// Replay only on the drawn blossom; unrelated gestures keep their normal owner.
+    /// A click on the idle logo is interaction, not a request to restart motion.
+    /// Do not consume the mouse event; the normal input owner still receives it.
     pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> bool {
         let inside = self
             .stage
             .is_some_and(|stage| stage.contains(Position::new(mouse.column, mouse.row)))
             && mouse.modifiers.is_empty();
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) if inside => {
-                self.start_fresh();
-                self.spin_elapsed =
-                    Duration::from_secs_f64(SETTLED_BLOSSOM * sequence::LOOP_SECONDS);
-                self.opacity = sequence::STATIC_OPACITY;
-                self.static_mark = Some(true);
-                self.replaying = true;
-                true
-            }
-            _ => false,
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && inside {
+            self.interacted = true;
+            self.cancel_replay();
         }
+        false
     }
 
     /// Stop visible time at the last painted frame, including when no hidden frame was drawn.
@@ -187,8 +182,12 @@ impl EmptyStateAnimation {
             .then_some(FRAME_INTERVAL)
     }
 
-    /// Draw only in space the caller has cleared and owns. The centered blossom returns
-    /// on clear, without restarting or scheduling animation.
+    /// Render only inside a reserved, unobstructed rectangle. At 80 terminal
+    /// columns the stage is at most 60 wide; a short 80x24 viewport scales
+    /// the mark down rather than displacing the input composer.
+    ///
+    /// Continuous rotation belongs only to a truly empty, untouched
+    /// composer. Typing or clicking stops it for this fresh conversation.
     pub(crate) fn render_first_screen(
         &mut self,
         available: Rect,
@@ -196,39 +195,52 @@ impl EmptyStateAnimation {
         composer: Option<ComposerState>,
         motion: MotionMode,
     ) -> Option<Duration> {
-        const STAGE_ROWS: u16 = 21;
-        const MIN_STAGE_ROWS: u16 = 14;
-        let screen = buffer.area;
-        let width = screen.width.saturating_sub(/*rhs*/ 4).min(MAX_COLUMNS);
-        let height = width * STAGE_ROWS / MAX_COLUMNS;
-        if motion == MotionMode::Reduced
-            || composer != Some(ComposerState::Empty)
-            || height < MIN_STAGE_ROWS
-            || height > screen.height
-        {
+        const IDEAL_ROWS: u16 = 21;
+        const MIN_STAGE_ROWS: u16 = 12;
+        if composer != Some(ComposerState::Empty) || available.is_empty() {
+            if composer == Some(ComposerState::Draft) {
+                self.interacted = true;
+            }
+            self.cancel_replay();
+            return None;
+        }
+        let max_width = buffer
+            .area
+            .width
+            .saturating_sub(4)
+            .min(available.width)
+            .min(MAX_COLUMNS);
+        let width_for_height =
+            (u32::from(available.height) * u32::from(MAX_COLUMNS) / u32::from(IDEAL_ROWS)) as u16;
+        let width = max_width.min(width_for_height);
+        let height = width * IDEAL_ROWS / MAX_COLUMNS;
+        if height < MIN_STAGE_ROWS || height > available.height {
             self.cancel_replay();
             return None;
         }
         let stage = Rect::new(
-            screen.x + (screen.width - width) / 2,
-            screen.y + (screen.height - height) / 2,
+            available.x + (available.width - width) / 2,
+            available.y + (available.height - height) / 2,
             width,
             height,
         );
-        if stage.intersection(available) != stage {
+        if stage.intersection(buffer.area) != stage {
             self.cancel_replay();
             return None;
         }
         self.stage = Some(stage);
-        if self.replaying {
-            if let Some(delay) = self.render_in(stage, buffer, Presentation::Animated) {
-                return Some(delay);
-            }
-            // The replay has faded back to the idle pose and no longer needs redraws.
-            self.replaying = false;
+        if self.interacted || motion == MotionMode::Reduced {
+            self.pause_clock();
+            self.paint_frame(stage, buffer, /*phase*/ 0.0, /*opacity*/ 1.0);
+            return None;
         }
-        self.paint_frame(stage, buffer, SETTLED_BLOSSOM, sequence::STATIC_OPACITY);
-        None
+        let now = Instant::now();
+        if let Some(last) = self.last_frame.replace(now) {
+            self.spin_elapsed += now.saturating_duration_since(last);
+        }
+        let phase = (self.spin_elapsed.as_secs_f64() / sequence::LOOP_SECONDS).fract();
+        self.paint_frame(stage, buffer, phase, /*opacity*/ 1.0);
+        Some(FRAME_INTERVAL)
     }
 
     fn paint_frame(&mut self, area: Rect, buffer: &mut Buffer, phase: f64, opacity: f32) {

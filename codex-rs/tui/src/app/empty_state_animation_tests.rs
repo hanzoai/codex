@@ -229,7 +229,20 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
     app.local_settings.tui.animations = false;
     draw(&mut app, &mut tui, size)?;
     let disabled = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
-    assert_eq!(disabled, &before);
+    // Reduced motion keeps the canonical front-facing mark without changing
+    // the composer, and repeated draws preserve the same static frame.
+    assert!(has_blossom(&tui));
+    assert_eq!(tui.terminal.last_known_cursor_pos, cursor);
+    assert_eq!(
+        &disabled.content[disabled.index_of(/*x*/ 0, before_bottom.y)..],
+        &before.content[before.index_of(/*x*/ 0, before_bottom.y)..]
+    );
+    let disabled = disabled.clone();
+    draw(&mut app, &mut tui, size)?;
+    assert_eq!(
+        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal),
+        &disabled
+    );
     app.local_settings.tui.animations = true;
     app.local_settings.tui.effects.welcome = false;
     draw(&mut app, &mut tui, size)?;
