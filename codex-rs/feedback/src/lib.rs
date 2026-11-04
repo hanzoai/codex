@@ -14,7 +14,6 @@ use std::time::Instant;
 
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::anyhow;
 use codex_http_client::ClientRouteClass;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::RouteAwareClientPool;
@@ -58,9 +57,8 @@ pub const CODEX_APP_DIRECTORY_CACHE_ATTACHMENT_FILENAME: &str = "codex-app-direc
 /// Filename used for the Windows sandbox log feedback attachment.
 pub const WINDOWS_SANDBOX_LOG_ATTACHMENT_FILENAME: &str = "windows-sandbox.log";
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
-const SENTRY_DSN: &str =
-    "https://ae32ed50620d7a7792c1ce5df38b3e3e@o33249.ingest.us.sentry.io/4510195390611458";
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 300);
+const MAX_HANZO_LOG_ATTACHMENT_BYTES: usize = 256 * 1024;
 // Raw collection budgets used by the report API, not the interactive upload.
 pub const MAX_ATTACHMENT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ATTACHMENTS_BYTES: usize = 126 * 1024 * 1024;
@@ -537,15 +535,11 @@ impl FeedbackSnapshot {
         reason: Option<&str>,
         tags: Option<&BTreeMap<String, String>>,
         session_source: Option<&SessionSource>,
-    ) -> sentry::protocol::Event<'static> {
-        use sentry::protocol::Event;
-        use sentry::protocol::Exception;
-        use sentry::protocol::Level;
-        use sentry::protocol::Values;
-
+    ) -> FeedbackEvent {
+        let event_id = uuid::Uuid::new_v4();
         let level = match classification {
-            "bug" | "bad_result" | "safety_check" => Level::Error,
-            _ => Level::Info,
+            "bug" | "bad_result" | "safety_check" => FeedbackLevel::Error,
+            _ => FeedbackLevel::Info,
         };
         let custom_title = tags
             .and_then(|tags| tags.get("feedback_title"))
@@ -554,14 +548,16 @@ impl FeedbackSnapshot {
         let title = custom_title.map_or_else(
             || {
                 format!(
-                    "[{}]: Codex session {}",
+                    "[{}]: {} session {}",
                     display_classification(classification),
+                    hanzo::PRODUCT_NAME,
                     self.thread_id
                 )
             },
             str::to_owned,
         );
-        let mut event = Event {
+        let mut event = FeedbackEvent {
+            event_id,
             level,
             message: Some(title.clone()),
             tags: self.upload_tags(classification, reason, tags, session_source),
@@ -569,14 +565,13 @@ impl FeedbackSnapshot {
         };
         if custom_title.is_some() {
             // A shared title must not merge independent reports and suppress new-issue alerts.
-            event.fingerprint = vec![event.event_id.to_string().into()].into();
+            event.fingerprint = vec![event_id.to_string()];
         }
         if let Some(reason) = reason {
-            event.exception = Values::from(vec![Exception {
+            event.exception = vec![FeedbackException {
                 ty: title,
                 value: Some(reason.to_string()),
-                ..Default::default()
-            }]);
+            }];
         }
         event
     }
@@ -606,78 +601,75 @@ impl FeedbackSnapshot {
         self.feedback_diagnostics.attachment_text()
     }
 
-    /// Submit feedback to Sentry with whole attachments within a shared deadline.
+    /// Submit feedback to Hanzo's event plane (`POST /v1/event`) within a shared deadline.
     /// Success means HTTP acceptance, not durable attachment storage. Callers must
     /// retain their source files; errors can occur after part of a report is accepted.
-    /// https://github.com/getsentry/relay/blob/master/relay-server/src/endpoints/common.rs
     pub async fn upload_feedback(
         &self,
         options: FeedbackUploadOptions<'_>,
         http_client_factory: &HttpClientFactory,
     ) -> Result<()> {
-        self.upload_feedback_with_dsn(
+        self.upload_feedback_to_hanzo(
             options,
             http_client_factory,
-            SENTRY_DSN,
+            hanzo::FEEDBACK_ENDPOINT,
+            hanzo::FEEDBACK_KEY,
             Instant::now() + UPLOAD_TIMEOUT,
         )
         .await
     }
 
-    async fn upload_feedback_with_dsn(
+    async fn upload_feedback_to_hanzo(
         &self,
         options: FeedbackUploadOptions<'_>,
         http_client_factory: &HttpClientFactory,
-        dsn: &str,
+        endpoint: &str,
+        key: &str,
         deadline: Instant,
     ) -> Result<()> {
-        use std::str::FromStr;
-
-        use sentry::protocol::Envelope;
-        use sentry::protocol::EnvelopeItem;
-        use sentry::types::Dsn;
-
         let started_at = Instant::now();
-        let dsn = Dsn::from_str(dsn).map_err(|error| anyhow!("invalid DSN: {error}"))?;
-
         let event = self.feedback_event(
             options.classification,
             options.reason,
             options.tags,
             options.session_source.as_ref(),
         );
-        let mut envelope = Envelope::new();
-        envelope.add_item(EnvelopeItem::Event(event));
-        let (event_body, event_bytes) =
-            upload::encode_envelope(&envelope).context("failed to serialize feedback event")?;
+        let person_id = event
+            .tags
+            .get("account_id")
+            .or_else(|| event.tags.get("chatgpt_user_id"))
+            .cloned();
+        let distinct_id = person_id
+            .clone()
+            .unwrap_or_else(|| self.thread_id.clone());
+        let event_id = event.event_id.to_string();
+        let core_body = event.to_hanzo_event_bytes(&self.thread_id, options.classification)?;
         anyhow::ensure!(
-            event_bytes <= MAX_EVENT_BYTES,
+            core_body.len() <= MAX_EVENT_BYTES,
             "feedback event exceeds the size limit"
         );
-        let headers = envelope.headers().clone();
-        drop(envelope);
+
         let client_pool = RouteAwareClientPool::new_without_redirects_or_request_logging(
             http_client_factory.clone(),
             ClientRouteClass::Other,
         );
-        // Accept the report before reading diagnostics; all envelopes share one deadline.
         let mut rate_limited = false;
-        let status = upload::send_envelope(
+        let status = upload::send_hanzo_event(
             &client_pool,
-            &dsn,
-            event_body,
-            upload::EnvelopeKind::Event,
+            endpoint,
+            key,
+            core_body,
+            upload::PayloadKind::Event,
             deadline,
             &mut rate_limited,
         )
         .await?;
         anyhow::ensure!(
             status.is_success(),
-            "Sentry rejected feedback upload with HTTP status {status}"
+            "Hanzo rejected feedback upload with HTTP status {status}"
         );
 
         let mut attachments = self.feedback_attachments(
-            &headers,
             options.include_logs,
             options.extra_attachments,
             options.extra_attachment_paths,
@@ -712,36 +704,35 @@ impl FeedbackSnapshot {
             }
             let mut status = None;
             let result: Result<()> = async {
-                let body = upload::encode_attachment_envelope(&headers, attachment?)?;
-                let response_status = upload::send_envelope(
+                let body = encode_attachment_payload(
+                    &event_id,
+                    &self.thread_id,
+                    &distinct_id,
+                    person_id.as_deref(),
+                    options.classification,
+                    attachment?,
+                )?;
+                let response_status = upload::send_hanzo_event(
                     &client_pool,
-                    &dsn,
+                    endpoint,
+                    key,
                     body,
-                    upload::EnvelopeKind::Attachment,
+                    upload::PayloadKind::Attachment,
                     deadline,
                     &mut rate_limited,
                 )
                 .await
-                .map_err(|error| {
-                    // Transport error strings can contain credential-bearing URLs.
-                    if let Some(cause) = error.downcast_ref::<codex_http_client::RouteAwareRequestError>() {
-                        anyhow!(
-                            "feedback transport failed: class={:?}, timeout={}, connect={}, request={}, body={}",
-                            cause.failure_class(), cause.is_timeout(), cause.is_connect(), cause.is_request(), cause.is_body()
-                        )
-                    } else {
-                        error
-                    }
-                })?;
-
+                .map_err(upload::sanitize_transport_error)?;
                 status = Some(response_status.as_u16());
-                anyhow::ensure!(response_status.is_success(), "Sentry rejected attachment");
+                anyhow::ensure!(
+                    response_status.is_success(),
+                    "Hanzo rejected feedback attachment with HTTP status {response_status}"
+                );
                 Ok(())
             }
             .await;
             if let Err(error) = result {
                 attachments_failed = true;
-                // Keep trying other diagnostics before reporting the partial failure.
                 tracing::error!(status, error = %format!("{error:#}"), "feedback attachment upload failed; continuing");
             } else {
                 uploaded_attachments += 1;
@@ -752,7 +743,7 @@ impl FeedbackSnapshot {
             uploaded_attachments,
             attachments_failed,
             elapsed_ms = started_at.elapsed().as_millis(),
-            "feedback event uploaded to Sentry"
+            "feedback event uploaded to Hanzo"
         );
         anyhow::ensure!(
             !attachments_failed,
@@ -778,8 +769,8 @@ impl FeedbackSnapshot {
             tags.insert(String::from("session_source"), source.to_string());
         }
         if let Some(reason) = reason {
-            // Sentry tags cannot contain newlines or exceed 200 characters. Keep the
-            // full comment in the exception body and a preview for tag consumers.
+            // Keep tag values compact and single-line while preserving the full comment in the
+            // exception body.
             let preview = reason
                 .chars()
                 .take(200)
@@ -819,14 +810,11 @@ impl FeedbackSnapshot {
 
     fn feedback_attachments<'a>(
         &'a self,
-        headers: &'a sentry::protocol::EnvelopeHeaders,
         include_logs: bool,
         extra_attachments: Vec<FeedbackAttachment>,
         extra_attachment_paths: &'a [FeedbackAttachmentPath],
         logs_override: Option<Vec<u8>>,
-    ) -> impl Iterator<Item = Result<sentry::protocol::Attachment>> + 'a {
-        use sentry::protocol::Attachment;
-
+    ) -> impl Iterator<Item = Result<FeedbackAttachment>> + 'a {
         // Partition metadata without reading files before the event is accepted. Keep
         // generated diagnostics first, then rollouts, then remaining files in caller order.
         let (rollouts, diagnostics_attachments): (Vec<_>, Vec<_>) =
@@ -859,25 +847,6 @@ impl FeedbackSnapshot {
                             let attachment = archive
                                 .read_attachment(MAX_DECODED_UPLOAD_BYTES)?
                                 .context("rollout archive is missing or exceeds the size limit")?;
-                            // Measure framing without copying the archive. Account for the extra
-                            // decimal digits when the empty attachment's length becomes nonzero.
-                            let mut envelope =
-                                sentry::protocol::Envelope::new().with_headers(headers.clone());
-                            envelope.add_item(Attachment {
-                                filename: attachment.filename.clone(),
-                                content_type: attachment.content_type.clone(),
-                                ..Default::default()
-                            });
-                            let mut framing = Vec::new();
-                            envelope.to_writer(&mut framing)?;
-                            let archive_bytes = attachment.buffer.len();
-                            let envelope_bytes = framing.len()
-                                + archive_bytes
-                                + archive_bytes.checked_ilog10().unwrap_or(0) as usize;
-                            anyhow::ensure!(
-                                envelope_bytes <= MAX_DECODED_UPLOAD_BYTES,
-                                "rollout archive envelope exceeds the size limit"
-                            );
                             Ok(Some(attachment))
                         });
                 rollout_archive::with_individual_fallback(
@@ -906,15 +875,169 @@ impl FeedbackSnapshot {
                     .read_attachment(MAX_DECODED_UPLOAD_BYTES)?
                     .context("feedback attachment is not a regular file or exceeds the size limit")
             }))
-            .map(|attachment| {
-                attachment.map(|attachment| Attachment {
-                    buffer: attachment.buffer,
-                    filename: attachment.filename,
-                    content_type: attachment.content_type,
-                    ty: None,
-                })
-            })
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum FeedbackLevel {
+    #[default]
+    Info,
+    Error,
+}
+
+impl FeedbackLevel {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl std::fmt::Display for FeedbackLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct FeedbackException {
+    pub(crate) ty: String,
+    pub(crate) value: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct FeedbackEvent {
+    pub(crate) event_id: uuid::Uuid,
+    pub(crate) level: FeedbackLevel,
+    pub(crate) message: Option<String>,
+    pub(crate) exception: Vec<FeedbackException>,
+    pub(crate) tags: BTreeMap<String, String>,
+    pub(crate) fingerprint: Vec<String>,
+}
+
+impl FeedbackEvent {
+    pub(crate) fn to_hanzo_event_bytes(
+        &self,
+        thread_id: &str,
+        classification: &str,
+    ) -> Result<Vec<u8>> {
+        let title = self.message.clone().unwrap_or_default();
+        let message = self
+            .exception
+            .first()
+            .and_then(|exc| exc.value.as_deref())
+            .unwrap_or(&title);
+        let person_id = self
+            .tags
+            .get("account_id")
+            .or_else(|| self.tags.get("chatgpt_user_id"))
+            .cloned();
+        let distinct_id = person_id
+            .clone()
+            .unwrap_or_else(|| thread_id.to_string());
+        let event_id = self.event_id.to_string();
+        let site = format!("dev/{classification}");
+        let path = format!("/feedback/{classification}");
+        serde_json::to_vec(&serde_json::json!({
+            "messageId": event_id,
+            "type": "error",
+            "event": "feedback",
+            "distinctId": distinct_id,
+            "personId": person_id.as_deref().unwrap_or(""),
+            "sessionId": thread_id,
+            "traceId": event_id,
+            "product": "dev",
+            "service": "dev",
+            "site": site,
+            "path": path,
+            "level": self.level.as_str(),
+            "release": hanzo::version::get(),
+            "error": {
+                "type": title,
+                "message": message,
+                "handled": true,
+            },
+            "properties": self.tags,
+        }))
+        .context("failed to serialize feedback event")
+    }
+}
+
+pub(crate) fn encode_attachment_payload(
+    event_id: &str,
+    thread_id: &str,
+    distinct_id: &str,
+    person_id: Option<&str>,
+    classification: &str,
+    attachment: FeedbackAttachment,
+) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        attachment.buffer.len() <= MAX_DECODED_UPLOAD_BYTES,
+        "feedback attachment exceeds the size limit"
+    );
+    let original_bytes = attachment.buffer.len();
+    let content_type = attachment
+        .content_type
+        .unwrap_or_else(|| "text/plain".to_string());
+    let (encoded, encoding) = match std::str::from_utf8(&attachment.buffer) {
+        Ok(text) => (std::borrow::Cow::Borrowed(text), "utf-8"),
+        Err(_) => {
+            let mut hex = String::with_capacity(attachment.buffer.len() * 2);
+            for byte in &attachment.buffer {
+                use std::fmt::Write as _;
+                let _ = write!(&mut hex, "{byte:02x}");
+            }
+            (std::borrow::Cow::Owned(hex), "hex")
+        }
+    };
+    let chunks = split_utf8_chunks(&encoded, MAX_HANZO_LOG_ATTACHMENT_BYTES);
+    let parts = chunks.len();
+    let site = format!("dev/{classification}");
+    let path = format!("/feedback/{classification}");
+    let make_chunk = |index: usize, body_text: &str| {
+        serde_json::json!({
+            "type": "log",
+            "event": "feedback.attachment",
+            "kind": attachment.filename,
+            "distinctId": distinct_id,
+            "personId": person_id.unwrap_or(""),
+            "sessionId": thread_id,
+            "traceId": event_id,
+            "product": "dev",
+            "service": "dev",
+            "site": site,
+            "path": path,
+            "level": "info",
+            "release": hanzo::version::get(),
+            "log": {
+                "severity": "info",
+                "body": body_text,
+            },
+            "properties": {
+                "thread_id": thread_id,
+                "classification": classification,
+                "filename": attachment.filename,
+                "content_type": content_type,
+                "encoding": encoding,
+                "original_bytes": original_bytes.to_string(),
+                "part": (index + 1).to_string(),
+                "parts": parts.to_string(),
+            },
+        })
+    };
+    let payload = if parts == 1 {
+        make_chunk(0, chunks[0])
+    } else {
+        serde_json::Value::Array(
+            chunks
+                .into_iter()
+                .enumerate()
+                .map(|(index, body_text)| make_chunk(index, body_text))
+                .collect(),
+        )
+    };
+    serde_json::to_vec(&payload).context("failed to serialize feedback attachment")
 }
 
 fn display_classification(classification: &str) -> String {
@@ -925,6 +1048,26 @@ fn display_classification(classification: &str) -> String {
         "safety_check" => "Safety check".to_string(),
         _ => "Other".to_string(),
     }
+}
+
+fn split_utf8_chunks(text: &str, max_bytes: usize) -> Vec<&str> {
+    if text.is_empty() {
+        return vec![""];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let end = (start + max_bytes).min(text.len());
+        let end = text.floor_char_boundary(end);
+        let end = if end > start {
+            end
+        } else {
+            text.ceil_char_boundary(start + 1)
+        };
+        chunks.push(&text[start..end]);
+        start = end;
+    }
+    chunks
 }
 
 #[derive(Clone)]
@@ -1120,13 +1263,13 @@ mod tests {
 
     async fn upload_test_feedback(
         feedback: &CodexFeedback,
-        dsn: &str,
+        endpoint: &str,
         extra_attachments: Vec<FeedbackAttachment>,
     ) -> Result<()> {
         feedback
             .snapshot(/*session_id*/ None)
             .with_feedback_diagnostics(FeedbackDiagnostics::default())
-            .upload_feedback_with_dsn(
+            .upload_feedback_to_hanzo(
                 FeedbackUploadOptions {
                     classification: "bug",
                     reason: Some("private feedback"),
@@ -1135,10 +1278,11 @@ mod tests {
                     extra_attachments,
                     extra_attachment_paths: &[],
                     session_source: Some(SessionSource::Cli),
-                    logs_override: Some(b"private log contents".to_vec()),
+                    logs_override: Some(b"private log contents\n".to_vec()),
                 },
                 &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
-                dsn,
+                endpoint,
+                hanzo::FEEDBACK_KEY,
                 Instant::now() + UPLOAD_TIMEOUT,
             )
             .await
@@ -1148,7 +1292,7 @@ mod tests {
     async fn feedback_upload_allows_slow_reports() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/42/envelope/"))
+            .and(path("/v1/event"))
             .respond_with(
                 ResponseTemplate::new(StatusCode::OK)
                     .set_delay(Duration::from_secs(/*secs*/ 4)),
@@ -1157,15 +1301,15 @@ mod tests {
             .mount(&server)
             .await;
 
-        let dsn = format!("http://public@{}/42", server.address());
+        let endpoint = format!("{}/v1/event", server.uri());
         let attachment = FeedbackAttachment {
             filename: "later.txt".to_string(),
             content_type: None,
             buffer: b"later diagnostic".to_vec(),
         };
-        upload_test_feedback(&CodexFeedback::new(), &dsn, vec![attachment])
+        upload_test_feedback(&CodexFeedback::new(), &endpoint, vec![attachment])
             .await
-            .expect("all three envelopes should finish across twelve seconds of network waits");
+            .expect("all three events should finish across twelve seconds of network waits");
     }
 
     #[tokio::test]
@@ -1173,7 +1317,7 @@ mod tests {
         let server = MockServer::start().await;
         let attempt = AtomicUsize::default();
         Mock::given(method("POST"))
-            .and(path("/api/42/envelope/"))
+            .and(path("/v1/event"))
             .respond_with(move |_: &wiremock::Request| {
                 match attempt.fetch_add(/*val*/ 1, Ordering::SeqCst) {
                     0 | 2 => ResponseTemplate::new(StatusCode::OK)
@@ -1188,7 +1332,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let dsn = format!("http://public@{}/42", server.address());
+        let endpoint = format!("{}/v1/event", server.uri());
         let attachments = ["stalled.txt", "later.txt"].map(|filename| FeedbackAttachment {
             filename: filename.to_string(),
             content_type: None,
@@ -1199,7 +1343,7 @@ mod tests {
             .with_feedback_diagnostics(FeedbackDiagnostics::default());
         let error = tokio::time::timeout(
             Duration::from_secs(/*secs*/ 10),
-            snapshot.upload_feedback_with_dsn(
+            snapshot.upload_feedback_to_hanzo(
                 FeedbackUploadOptions {
                     classification: "bug",
                     reason: None,
@@ -1211,7 +1355,8 @@ mod tests {
                     logs_override: Some(b"log contents".to_vec()),
                 },
                 &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
-                &dsn,
+                &endpoint,
+                hanzo::FEEDBACK_KEY,
                 Instant::now() + Duration::from_secs(/*secs*/ 8),
             ),
         )
@@ -1232,9 +1377,9 @@ mod tests {
         let server = MockServer::start().await;
         let attempt = AtomicUsize::default();
         Mock::given(method("POST"))
-            .and(path("/api/42/envelope/"))
-            .and(header_exists("X-Sentry-Auth"))
-            .and(header("Content-Encoding", "gzip"))
+            .and(path("/v1/event"))
+            .and(header_exists("Authorization"))
+            .and(header("Content-Type", "application/json"))
             .respond_with(move |_: &wiremock::Request| {
                 match attempt.fetch_add(/*val*/ 1, Ordering::SeqCst) {
                     // Accept the core once; accept logs only on their second attempt.
@@ -1257,16 +1402,16 @@ mod tests {
             .mount(&server)
             .await;
 
-        let dsn = format!("http://public@{}/42", server.address());
+        let endpoint = format!("{}/v1/event", server.uri());
         let attachments = ["retry-exhausted.txt", "later.txt"].map(|filename| FeedbackAttachment {
             filename: filename.to_string(),
             content_type: Some("text/plain".to_string()),
             buffer: filename.as_bytes().to_vec(),
         });
         let started = Instant::now();
-        upload_test_feedback(&CodexFeedback::new(), &dsn, attachments.into())
+        upload_test_feedback(&CodexFeedback::new(), &endpoint, attachments.into())
             .await
-            .expect_err("legacy uploads report incomplete diagnostics");
+            .expect_err("uploads report incomplete diagnostics");
         assert!(started.elapsed() >= Duration::from_secs(2));
         let requests = server.received_requests().await.unwrap();
         assert_eq!(
@@ -1279,11 +1424,8 @@ mod tests {
                 .iter()
                 .all(|request| request.body == requests[3].body)
         );
-        let mut decoded = String::new();
-        GzDecoder::new(requests[1].body.as_slice())
-            .read_to_string(&mut decoded)
-            .unwrap();
-        assert!(decoded.ends_with("private log contents\n"));
+        let payload: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+        assert_eq!(payload["log"]["body"], "private log contents\n");
     }
 
     #[tokio::test]
@@ -1295,23 +1437,22 @@ mod tests {
         let pending_path = second_path.with_extension("pending");
         let block = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"diagnostic fixture 🍵\"}}\n"
             .repeat(1024);
-        let block_counts = [65, 80].map(|mib| mib * 1024 * 1024 / block.len() + 1);
+        let block_counts = [1, 2].map(|mib| mib * 1024 * 1024 / block.len() + 1);
         for (path, blocks) in [&first_path, &pending_path].into_iter().zip(block_counts) {
             let mut file = fs::File::create(path).unwrap();
             for _ in 0..blocks {
                 file.write_all(block.as_bytes()).unwrap();
             }
         }
-        // Repeats beyond gzip's window keep the archive above the former 38.1 MiB cap.
         let record_block = (0..4096)
-            .flat_map(|_| sentry::types::Uuid::new_v4().into_bytes())
+            .flat_map(|_| uuid::Uuid::new_v4().into_bytes())
             .map(|byte| {
                 b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
                     [usize::from(byte % 64)]
             })
             .collect::<Vec<_>>();
         let mut file = GzEncoder::new(fs::File::create(&binary_path).unwrap(), Compression::fast());
-        for mib in [32, 30] {
+        for mib in [1, 1] {
             file.write_all(b"{\"message\":\"").unwrap();
             for _ in 0..mib * 1024 * 1024 / record_block.len() {
                 file.write_all(&record_block).unwrap();
@@ -1319,13 +1460,13 @@ mod tests {
             file.write_all(b"\"}\n").unwrap();
         }
         file.finish().unwrap();
-        assert!(fs::metadata(&binary_path).unwrap().len() > 40_000_000);
+        assert!(fs::metadata(&binary_path).unwrap().len() > MAX_HANZO_LOG_ATTACHMENT_BYTES as u64);
 
         let server = MockServer::start().await;
         let attempt = AtomicUsize::default();
         let ready_path = second_path.clone();
         Mock::given(method("POST"))
-            .and(path("/api/42/envelope/"))
+            .and(path("/v1/event"))
             .respond_with(move |_: &wiremock::Request| {
                 if attempt.fetch_add(/*val*/ 1, Ordering::SeqCst) == 1 {
                     // The next file becomes readable only after the first file arrives.
@@ -1339,7 +1480,7 @@ mod tests {
 
         CodexFeedback::new()
             .snapshot(/*session_id*/ None)
-            .upload_feedback_with_dsn(
+            .upload_feedback_to_hanzo(
                 FeedbackUploadOptions {
                     classification: "bug",
                     reason: Some("large diagnostic upload"),
@@ -1364,47 +1505,50 @@ mod tests {
                     logs_override: None,
                 },
                 &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
-                &format!("http://public@{}/42", server.address()),
+                &format!("{}/v1/event", server.uri()),
+                hanzo::FEEDBACK_KEY,
                 Instant::now() + UPLOAD_TIMEOUT,
             )
             .await
             .unwrap();
         let requests = server.received_requests().await.unwrap();
         assert_eq!(requests.len(), 4);
-        let mut event = String::new();
-        GzDecoder::new(requests[0].body.as_slice())
-            .read_to_string(&mut event)
-            .unwrap();
+        let core: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        let event_id = core["messageId"].as_str().unwrap();
         for (request, (filename, source_path)) in requests[1..].iter().zip([
             (format!("feedback-first-{suffix}.jsonl"), &first_path),
             (format!("feedback-second-{suffix}.jsonl"), &second_path),
             (format!("feedback-archive-{suffix}.jsonl.gz"), &binary_path),
         ]) {
-            let mut decoded = Vec::new();
-            if request.headers.contains_key("Content-Encoding") {
-                GzDecoder::new(request.body.as_slice())
-                    .read_to_end(&mut decoded)
-                    .unwrap();
-            } else {
-                decoded.extend_from_slice(&request.body);
+            let value: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let items = value.as_array().expect("multi-chunk attachment should be a JSON array");
+            assert!(items.len() > 1);
+            let mut reassembled = String::new();
+            let mut encoding = "";
+            for (index, item) in items.iter().enumerate() {
+                assert_eq!(item["traceId"], event_id);
+                assert_eq!(item["kind"], filename);
+                assert_eq!(item["properties"]["part"], (index + 1).to_string());
+                assert_eq!(item["properties"]["parts"], items.len().to_string());
+                encoding = item["properties"]["encoding"].as_str().unwrap();
+                reassembled.push_str(item["log"]["body"].as_str().unwrap());
             }
-            assert!(decoded.len() <= MAX_DECODED_UPLOAD_BYTES);
-            let mut parts = decoded.splitn(3, |byte| *byte == b'\n');
-            assert_eq!(
-                parts.next().unwrap(),
-                event.lines().next().unwrap().as_bytes()
-            );
-            let header = std::str::from_utf8(parts.next().unwrap()).unwrap();
-            assert!(header.contains(&format!("\"filename\":\"{filename}\"")));
-            let payload = parts.next().unwrap().strip_suffix(b"\n").unwrap();
+            let payload = if encoding == "hex" {
+                (0..reassembled.len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&reassembled[i..i + 2], 16).unwrap())
+                    .collect::<Vec<_>>()
+            } else {
+                reassembled.into_bytes()
+            };
             let mut source = fs::File::open(source_path).unwrap();
             let original_bytes = source.metadata().unwrap().len() as usize;
             assert_eq!(payload.len(), original_bytes);
             if filename.ends_with(".jsonl") {
-                let text = std::str::from_utf8(payload).unwrap();
+                let text = std::str::from_utf8(&payload).unwrap();
                 assert!(text.ends_with('\n'));
             } else {
-                let mut archive = GzDecoder::new(payload);
+                let mut archive = GzDecoder::new(payload.as_slice());
                 io::copy(&mut archive, &mut io::sink()).expect("received archive must be intact");
             }
             let mut expected = [0; 64 * 1024];
@@ -1439,7 +1583,7 @@ mod tests {
         ] {
             let result = CodexFeedback::new()
                 .snapshot(/*session_id*/ None)
-                .upload_feedback_with_dsn(
+                .upload_feedback_to_hanzo(
                     FeedbackUploadOptions {
                         classification: "bug",
                         reason: None,
@@ -1454,7 +1598,8 @@ mod tests {
                         logs_override: None,
                     },
                     &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
-                    &format!("http://public@{}/42", server.address()),
+                    &format!("{}/v1/event", server.uri()),
+                    hanzo::FEEDBACK_KEY,
                     Instant::now() + UPLOAD_TIMEOUT,
                 )
                 .await;
@@ -1471,7 +1616,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn feedback_upload_stops_diagnostics_for_sentry_rate_limits() {
+    async fn feedback_upload_stops_diagnostics_for_rate_limits() {
         for (accepted_before_limit, rate_limit) in [
             (1, ResponseTemplate::new(StatusCode::TOO_MANY_REQUESTS)),
             (
@@ -1508,7 +1653,7 @@ mod tests {
             let server = MockServer::start().await;
             let attempt = AtomicUsize::default();
             Mock::given(method("POST"))
-                .and(path("/api/42/envelope/"))
+                .and(path("/v1/event"))
                 .respond_with(move |_: &wiremock::Request| {
                     if attempt.fetch_add(/*val*/ 1, Ordering::SeqCst) < accepted_before_limit {
                         ResponseTemplate::new(StatusCode::OK)
@@ -1520,34 +1665,34 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let dsn = format!("http://public@{}/42", server.address());
+            let endpoint = format!("{}/v1/event", server.uri());
             let later = FeedbackAttachment {
                 filename: "later.txt".to_string(),
                 content_type: None,
                 buffer: b"later diagnostic".to_vec(),
             };
-            upload_test_feedback(&CodexFeedback::new(), &dsn, vec![later])
+            upload_test_feedback(&CodexFeedback::new(), &endpoint, vec![later])
                 .await
-                .expect_err("legacy uploads report rate-limited diagnostics");
+                .expect_err("uploads report rate-limited diagnostics");
         }
     }
 
     #[tokio::test]
-    async fn feedback_upload_reports_rejected_sentry_response_without_exposing_feedback() {
+    async fn feedback_upload_reports_rejected_response_without_exposing_feedback() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/42/envelope/"))
+            .and(path("/v1/event"))
             .respond_with(ResponseTemplate::new(503))
             .expect(1)
             .mount(&server)
             .await;
 
         let feedback = CodexFeedback::new();
-        let dsn = format!("http://public@{}/42", server.address());
+        let endpoint = format!("{}/v1/event", server.uri());
 
-        let error = upload_test_feedback(&feedback, &dsn, Vec::new())
+        let error = upload_test_feedback(&feedback, &endpoint, Vec::new())
             .await
-            .expect_err("rejected Sentry responses must fail feedback uploads");
+            .expect_err("rejected responses must fail feedback uploads");
 
         let error = format!("{error:#}");
         assert!(error.contains("503"));
@@ -1556,19 +1701,19 @@ mod tests {
 
     #[tokio::test]
     async fn feedback_upload_does_not_forward_private_data_to_redirect_target() {
-        let sentry_server = MockServer::start().await;
+        let event_server = MockServer::start().await;
         let redirect_target = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/42/envelope/"))
+            .and(path("/v1/event"))
             .respond_with(
                 ResponseTemplate::new(307)
                     .insert_header("Location", format!("{}/capture", redirect_target.uri())),
             )
             .expect(1)
-            .mount(&sentry_server)
+            .mount(&event_server)
             .await;
-        let dsn = format!("http://public@{}/42", sentry_server.address());
-        let error = upload_test_feedback(&CodexFeedback::new(), &dsn, Vec::new())
+        let endpoint = format!("{}/v1/event", event_server.uri());
+        let error = upload_test_feedback(&CodexFeedback::new(), &endpoint, Vec::new())
             .await
             .expect_err("redirected feedback uploads must be rejected");
 
@@ -1591,8 +1736,8 @@ mod tests {
             .expect("listener should have an address");
         drop(listener);
 
-        let dsn = format!("http://public@{address}/42");
-        let error = upload_test_feedback(&CodexFeedback::new(), &dsn, Vec::new())
+        let endpoint = format!("http://{address}/v1/event");
+        let error = upload_test_feedback(&CodexFeedback::new(), &endpoint, Vec::new())
             .await
             .expect_err("transport failures must fail feedback uploads");
 
@@ -1623,7 +1768,6 @@ mod tests {
 
         let attachments_with_diagnostics = snapshot_with_diagnostics
             .feedback_attachments(
-                &sentry::protocol::EnvelopeHeaders::default(),
                 /*include_logs*/ true,
                 vec![FeedbackAttachment {
                     filename: DOCTOR_REPORT_ATTACHMENT_FILENAME.to_string(),
@@ -1670,7 +1814,6 @@ mod tests {
             .snapshot(/*session_id*/ None)
             .with_feedback_diagnostics(FeedbackDiagnostics::default())
             .feedback_attachments(
-                &sentry::protocol::EnvelopeHeaders::default(),
                 /*include_logs*/ true,
                 Vec::new(),
                 &[],
@@ -1705,7 +1848,6 @@ mod tests {
         let attachments = CodexFeedback::new()
             .snapshot(/*session_id*/ None)
             .feedback_attachments(
-                &sentry::protocol::EnvelopeHeaders::default(),
                 /*include_logs*/ false,
                 Vec::new(),
                 &[

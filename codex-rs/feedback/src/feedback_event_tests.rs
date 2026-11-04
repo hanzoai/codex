@@ -1,21 +1,16 @@
 //! Feedback event contracts for titles, report grouping, and lossless comment bodies.
 
 use crate::CodexFeedback;
+use crate::FeedbackEvent;
+use crate::FeedbackException;
+use crate::FeedbackLevel;
 use crate::FeedbackUploadOptions;
 use crate::UPLOAD_TIMEOUT;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
-use flate2::read::GzDecoder;
 use http::StatusCode;
 use pretty_assertions::assert_eq;
-use sentry::protocol::Event;
-use sentry::protocol::Exception;
-use sentry::protocol::Level;
-use sentry::protocol::Value;
-use sentry::protocol::Values;
-use sentry::protocol::value::to_value;
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::time::Instant;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -59,23 +54,19 @@ fn custom_titles_preserve_comments_and_keep_submissions_separate() {
         }
         assert_eq!(
             event,
-            Event {
+            FeedbackEvent {
                 event_id: event.event_id,
-                timestamp: event.timestamp,
-                level: Level::Info,
+                level: FeedbackLevel::Info,
                 message: Some(title.to_string()),
                 exception: reason
-                    .map(|reason| Exception {
+                    .map(|reason| FeedbackException {
                         ty: title.to_string(),
                         value: Some(reason.to_string()),
-                        ..Default::default()
                     })
                     .into_iter()
-                    .collect::<Vec<_>>()
-                    .into(),
+                    .collect(),
                 tags: expected_tags,
-                fingerprint: vec![event.event_id.to_string().into()].into(),
-                ..Default::default()
+                fingerprint: vec![event.event_id.to_string()],
             }
         );
         let next_event =
@@ -97,7 +88,7 @@ fn missing_or_blank_titles_preserve_session_titles_and_default_grouping() {
             tags.as_ref(),
             /*session_source*/ None,
         );
-        let title = format!("[Bug]: Codex session {}", snapshot.thread_id);
+        let title = format!("[Bug]: Hanzo Dev session {}", snapshot.thread_id);
         let mut expected_tags = tags.unwrap_or_default();
         expected_tags.extend([
             ("thread_id".to_string(), snapshot.thread_id.clone()),
@@ -113,17 +104,14 @@ fn missing_or_blank_titles_preserve_session_titles_and_default_grouping() {
         ]);
         assert_eq!(
             event,
-            Event {
+            FeedbackEvent {
                 event_id: event.event_id,
-                timestamp: event.timestamp,
-                level: Level::Error,
+                level: FeedbackLevel::Error,
                 message: Some(title.clone()),
-                exception: vec![Exception {
+                exception: vec![FeedbackException {
                     ty: title,
                     value: Some(reason.to_string()),
-                    ..Default::default()
-                }]
-                .into(),
+                }],
                 tags: expected_tags,
                 ..Default::default()
             }
@@ -134,7 +122,7 @@ fn missing_or_blank_titles_preserve_session_titles_and_default_grouping() {
 #[test]
 fn reason_tag_previews_preserve_full_comments_in_the_exception() {
     let snapshot = CodexFeedback::new().snapshot(/*session_id*/ None);
-    let title = format!("[Bug]: Codex session {}", snapshot.thread_id);
+    let title = format!("[Bug]: Hanzo Dev session {}", snapshot.thread_id);
     for (reason, preview) in [
         ("A short comment".to_string(), "A short comment".to_string()),
         (
@@ -153,17 +141,14 @@ fn reason_tag_previews_preserve_full_comments_in_the_exception() {
         );
         assert_eq!(
             event,
-            Event {
+            FeedbackEvent {
                 event_id: event.event_id,
-                timestamp: event.timestamp,
-                level: Level::Error,
+                level: FeedbackLevel::Error,
                 message: Some(title.clone()),
-                exception: vec![Exception {
+                exception: vec![FeedbackException {
                     ty: title.clone(),
                     value: Some(reason),
-                    ..Default::default()
-                }]
-                .into(),
+                }],
                 tags: BTreeMap::from([
                     ("thread_id".to_string(), snapshot.thread_id.clone()),
                     ("classification".to_string(), "bug".to_string()),
@@ -183,8 +168,8 @@ fn reason_tag_previews_preserve_full_comments_in_the_exception() {
 async fn feedback_upload_sends_safe_reason_tag_and_full_comment() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/42/envelope/"))
-        .and(header("Content-Encoding", "gzip"))
+        .and(path("/v1/event"))
+        .and(header("Content-Type", "application/json"))
         .respond_with(ResponseTemplate::new(StatusCode::OK))
         .expect(/*r*/ 1)
         .mount(&server)
@@ -194,7 +179,7 @@ async fn feedback_upload_sends_safe_reason_tag_and_full_comment() {
     let reason = format!("first\r\nsecond\n{}tail", "界🌍".repeat(120));
     let tags = BTreeMap::from([("reason".to_string(), "caller override\n".to_string())]);
     snapshot
-        .upload_feedback_with_dsn(
+        .upload_feedback_to_hanzo(
             FeedbackUploadOptions {
                 classification: "bug",
                 reason: Some(&reason),
@@ -206,7 +191,8 @@ async fn feedback_upload_sends_safe_reason_tag_and_full_comment() {
                 logs_override: None,
             },
             &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
-            &format!("http://public@{}/42", server.address()),
+            &format!("{}/v1/event", server.uri()),
+            hanzo::FEEDBACK_KEY,
             Instant::now() + UPLOAD_TIMEOUT,
         )
         .await
@@ -214,23 +200,17 @@ async fn feedback_upload_sends_safe_reason_tag_and_full_comment() {
 
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
-    let mut decoded = Vec::new();
-    GzDecoder::new(requests[0].body.as_slice())
-        .read_to_end(&mut decoded)
-        .unwrap();
-    // The first two envelope lines are its header and the event item header.
-    let payload = std::str::from_utf8(&decoded)
-        .unwrap()
-        .splitn(/*n*/ 3, '\n')
-        .nth(/*n*/ 2)
-        .unwrap();
-    let event: Value = payload.parse().unwrap();
+    let event: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(
-        event["tags"]["reason"].as_str().unwrap().chars().count(),
+        event["properties"]["reason"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
         200
     );
-    let title = format!("[Bug]: Codex session {}", snapshot.thread_id);
-    let expected_tags = to_value(BTreeMap::from([
+    let title = format!("[Bug]: Hanzo Dev session {}", snapshot.thread_id);
+    let expected_tags = serde_json::to_value(BTreeMap::from([
         ("thread_id".to_string(), snapshot.thread_id),
         ("classification".to_string(), "bug".to_string()),
         (
@@ -243,14 +223,94 @@ async fn feedback_upload_sends_safe_reason_tag_and_full_comment() {
         ),
     ]))
     .unwrap();
-    let expected_exception = to_value(Values::from(vec![Exception {
-        ty: title,
-        value: Some(reason),
-        ..Default::default()
-    }]))
-    .unwrap();
+    let expected_error = serde_json::json!({
+        "type": title,
+        "message": reason,
+        "handled": true,
+    });
     assert_eq!(
-        (&event["tags"], &event["exception"]),
-        (&expected_tags, &expected_exception)
+        (&event["properties"], &event["error"]),
+        (&expected_tags, &expected_error)
     );
+}
+
+#[tokio::test]
+async fn feedback_upload_to_hanzo_sends_error_event_and_log_attachments() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/event"))
+        .and(header("Authorization", "Bearer pk-test-dev-key"))
+        .and(header("Content-Type", "application/json"))
+        .respond_with(
+            ResponseTemplate::new(StatusCode::OK)
+                .set_body_string("{\"accepted\":1,\"dropped\":0}"),
+        )
+        .expect(/*r*/ 3)
+        .mount(&server)
+        .await;
+
+    let snapshot = CodexFeedback::new()
+        .snapshot(/*session_id*/ None)
+        .with_feedback_diagnostics(crate::FeedbackDiagnostics::default());
+    let tags = BTreeMap::from([("account_id".to_string(), "user-42".to_string())]);
+    snapshot
+        .upload_feedback_to_hanzo(
+            FeedbackUploadOptions {
+                classification: "bad_result",
+                reason: Some("missed repo status constraints"),
+                tags: Some(&tags),
+                include_logs: true,
+                extra_attachments: vec![crate::FeedbackAttachment {
+                    filename: crate::DOCTOR_REPORT_ATTACHMENT_FILENAME.to_string(),
+                    content_type: Some("application/json".to_string()),
+                    buffer: b"{\"overallStatus\":\"ok\"}".to_vec(),
+                }],
+                extra_attachment_paths: &[],
+                session_source: None,
+                logs_override: Some(b"ring buffer log line\n".to_vec()),
+            },
+            &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            &format!("{}/v1/event", server.uri()),
+            "pk-test-dev-key",
+            Instant::now() + UPLOAD_TIMEOUT,
+        )
+        .await
+        .unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+
+    let core: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let event_id = core["messageId"].as_str().unwrap();
+    assert_eq!(core["type"], "error");
+    assert_eq!(core["event"], "feedback");
+    assert_eq!(core["product"], "dev");
+    assert_eq!(core["distinctId"], "user-42");
+    assert_eq!(core["sessionId"], snapshot.thread_id);
+    assert_eq!(core["traceId"], event_id);
+    assert_eq!(core["level"], "error");
+    assert_eq!(
+        core["error"]["type"],
+        format!("[Bad result]: Hanzo Dev session {}", snapshot.thread_id)
+    );
+    assert_eq!(core["error"]["message"], "missed repo status constraints");
+    assert_eq!(core["error"]["handled"], true);
+    assert_eq!(core["properties"]["classification"], "bad_result");
+    assert_eq!(core["properties"]["thread_id"], snapshot.thread_id);
+
+    let log_event: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(log_event["type"], "log");
+    assert_eq!(log_event["event"], "feedback.attachment");
+    assert_eq!(log_event["kind"], "codex-logs.log");
+    assert_eq!(log_event["sessionId"], snapshot.thread_id);
+    assert_eq!(log_event["traceId"], event_id);
+    assert_eq!(log_event["log"]["body"], "ring buffer log line\n");
+
+    let doctor_event: serde_json::Value = serde_json::from_slice(&requests[2].body).unwrap();
+    assert_eq!(doctor_event["type"], "log");
+    assert_eq!(
+        doctor_event["kind"],
+        crate::DOCTOR_REPORT_ATTACHMENT_FILENAME
+    );
+    assert_eq!(doctor_event["log"]["body"], "{\"overallStatus\":\"ok\"}");
 }

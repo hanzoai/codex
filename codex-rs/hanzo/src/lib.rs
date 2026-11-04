@@ -60,6 +60,14 @@ pub const API_BASE: &str = "https://api.hanzo.ai/v1";
 /// The model a profile that names none runs on.
 pub const DEFAULT_MODEL: &str = "enso-auto";
 
+/// Where `/feedback` sends a report (`POST /v1/event`), the publishable key for
+/// `hanzoai/dev` that routes it into Hanzo's event and error plane, and the links
+/// the TUI shows before and after submission.
+pub const FEEDBACK_ENDPOINT: &str = "https://api.hanzo.ai/v1/event";
+pub const FEEDBACK_KEY: &str = "pk-YO48Xen0YayGE5n3t0jBv-GWR81uX5qzG3-s9tLPF-4";
+pub const FEEDBACK_ISSUE_URL: &str = "https://github.com/hanzoai/dev/issues/new";
+pub const FEEDBACK_POLICY_URL: &str = "https://hanzo.ai/privacy";
+
 /// Whether a provider's base URL is [`API_BASE`].
 pub fn is_hanzo(base_url: Option<&str>) -> bool {
     base_url.is_some_and(|url| url.trim_end_matches('/') == API_BASE)

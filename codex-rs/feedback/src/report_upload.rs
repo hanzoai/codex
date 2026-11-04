@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_http_client::ClientRouteClass;
@@ -9,25 +8,20 @@ use codex_http_client::HttpClientFactory;
 use codex_http_client::RouteAwareClientPool;
 use codex_protocol::protocol::SessionSource;
 use http::StatusCode;
-use sentry::protocol::Attachment;
-use sentry::protocol::Envelope;
-use sentry::protocol::EnvelopeHeaders;
-use sentry::protocol::EnvelopeItem;
-use sentry::types::Dsn;
-use sentry::types::Uuid;
+use uuid::Uuid;
 
 use crate::FeedbackAttachment;
 use crate::FeedbackSnapshot;
 use crate::MAX_DECODED_UPLOAD_BYTES;
 use crate::MAX_EVENT_BYTES;
-use crate::SENTRY_DSN;
+use crate::encode_attachment_payload;
 use crate::upload;
 
 // Background parts must tolerate slow links without inheriting the interactive
 // upload's ten-second budget. The report API can cancel the request at any time.
 const REPORT_PART_UPLOAD_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 300);
 
-/// The upstream HTTP result, not proof of durable storage in Sentry.
+/// The upstream HTTP result, not proof of durable storage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FeedbackDelivery {
     Accepted {
@@ -37,14 +31,15 @@ pub enum FeedbackDelivery {
         status: u16,
         retry_after: Option<Duration>,
     },
-    /// No response was received. The upstream may still have accepted the envelope.
+    /// No response was received. The upstream may still have accepted the payload.
     Unconfirmed,
 }
 
 /// Sends persisted report parts without retries or request diagnostics.
 pub struct FeedbackTransport {
     client_pool: RouteAwareClientPool,
-    dsn: Dsn,
+    endpoint: &'static str,
+    key: &'static str,
 }
 
 impl FeedbackTransport {
@@ -54,22 +49,22 @@ impl FeedbackTransport {
                 http_client_factory,
                 ClientRouteClass::Other,
             ),
-            dsn: SENTRY_DSN
-                .parse()
-                .map_err(|_| anyhow!("invalid feedback DSN"))?,
+            endpoint: hanzo::FEEDBACK_ENDPOINT,
+            key: hanzo::FEEDBACK_KEY,
         })
     }
 
     /// Make one attempt. Callers own retry decisions and must retain the same bytes.
-    pub async fn send(&self, envelope: Vec<u8>) -> FeedbackDelivery {
-        let response = upload::envelope_request(
-            &self.client_pool,
-            &self.dsn,
-            envelope.into(),
-            REPORT_PART_UPLOAD_TIMEOUT,
-        )
-        .send()
-        .await;
+    pub async fn send(&self, payload: Vec<u8>) -> FeedbackDelivery {
+        let response = self
+            .client_pool
+            .post(self.endpoint)
+            .header("Authorization", format!("Bearer {}", self.key))
+            .header("Content-Type", "application/json")
+            .body(payload)
+            .timeout(REPORT_PART_UPLOAD_TIMEOUT)
+            .send()
+            .await;
         let Ok(response) = response else {
             return FeedbackDelivery::Unconfirmed;
         };
@@ -83,10 +78,7 @@ impl FeedbackTransport {
                     .unwrap_or(upload::DEFAULT_RATE_LIMIT)
             })
             .max();
-        // Report events and attachments share one conservative cooldown. Honor quotas on
-        // successful responses too; ignore quotas for unrelated Sentry categories.
-        // https://develop.sentry.dev/sdk/foundations/transport/rate-limiting/
-        retry_after = retry_after.max(upload::sentry_rate_limit_delay(headers));
+        retry_after = retry_after.max(upload::rate_limit_delay(headers));
         if status == StatusCode::TOO_MANY_REQUESTS && retry_after.is_none() {
             retry_after = Some(upload::DEFAULT_RATE_LIMIT);
         }
@@ -102,7 +94,7 @@ impl FeedbackTransport {
 }
 
 impl FeedbackSnapshot {
-    /// Prepare only the core report, using the caller's stable UUID as its Sentry event ID.
+    /// Prepare only the core report, using the caller's stable UUID as its event ID.
     pub fn prepare_report_event(
         &self,
         report_id: &str,
@@ -120,9 +112,12 @@ impl FeedbackSnapshot {
         });
         event.event_id =
             Uuid::parse_str(report_id).map_err(|_| anyhow!("invalid feedback report ID"))?;
-        let mut envelope = Envelope::new();
-        envelope.add_item(EnvelopeItem::Event(event));
-        prepare_envelope(envelope, MAX_EVENT_BYTES)
+        let bytes = event.to_hanzo_event_bytes(&self.thread_id, classification)?;
+        anyhow::ensure!(
+            bytes.len() <= MAX_EVENT_BYTES,
+            "feedback event exceeds the size limit"
+        );
+        Ok(bytes)
     }
 }
 
@@ -133,22 +128,17 @@ pub fn prepare_report_attachment(
     attachment: FeedbackAttachment,
 ) -> Result<Vec<u8>> {
     let event_id = Uuid::parse_str(report_id).map_err(|_| anyhow!("invalid feedback report ID"))?;
-    let mut envelope = Envelope::new().with_headers(EnvelopeHeaders::new().with_event_id(event_id));
-    envelope.add_item(EnvelopeItem::Attachment(Attachment {
-        buffer: attachment.buffer,
-        filename: attachment.filename,
-        content_type: attachment.content_type,
-        ty: None,
-    }));
-    prepare_envelope(envelope, MAX_DECODED_UPLOAD_BYTES)
-}
-
-fn prepare_envelope(envelope: Envelope, max_decoded_bytes: usize) -> Result<Vec<u8>> {
-    let (bytes, decoded_bytes) =
-        upload::encode_envelope(&envelope).context("failed to serialize feedback envelope")?;
     anyhow::ensure!(
-        decoded_bytes <= max_decoded_bytes,
-        "feedback envelope exceeds the size limit"
+        attachment.buffer.len() <= MAX_DECODED_UPLOAD_BYTES,
+        "feedback attachment exceeds the size limit"
     );
-    Ok(bytes)
+    let event_id_str = event_id.to_string();
+    encode_attachment_payload(
+        &event_id_str,
+        &event_id_str,
+        &event_id_str,
+        None,
+        "bug",
+        attachment,
+    )
 }

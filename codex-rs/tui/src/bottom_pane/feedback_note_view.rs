@@ -36,7 +36,7 @@ use super::popup_consts::accept_cancel_hint_line;
 use super::textarea::TextArea;
 use super::textarea::TextAreaState;
 
-const FEEDBACK_POLICY_URL: &str = "https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance";
+const FEEDBACK_POLICY_URL: &str = hanzo::FEEDBACK_POLICY_URL;
 const EMPLOYEE_FEEDBACK_FAQ_URL: &str = "https://go/codex-employee-feedback-faq";
 
 enum IntroContent {
@@ -393,7 +393,7 @@ impl FeedbackNoteView {
                 ]));
             }
             FeedbackAudience::External => lines.push(Line::from(vec![
-                "Your feedback can be used to improve ChatGPT. ".dim(),
+                "Your feedback can be used to improve Dev. ".dim(),
                 "Learn more".fg(crate::style::accent_color()).underlined(),
                 ".".dim(),
             ])),

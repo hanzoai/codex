@@ -50,8 +50,6 @@ impl Drop for Fixture {
 async fn feedback_upload_archives_two_rollouts_that_can_be_extracted_and_read() -> Result<()> {
     use codex_http_client::OutboundProxyPolicy;
     use flate2::read::GzDecoder;
-    use sentry::protocol::Envelope;
-    use sentry::protocol::EnvelopeItem;
     use wiremock::Mock;
     use wiremock::MockServer;
     use wiremock::ResponseTemplate;
@@ -63,16 +61,16 @@ async fn feedback_upload_archives_two_rollouts_that_can_be_extracted_and_read() 
     let second_bytes = b"{\"message\":\"second rollout\"}\n";
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/42/envelope/"))
+        .and(path("/v1/event"))
         .respond_with(ResponseTemplate::new(200))
         .expect(/*r*/ 2)
         .mount(&server)
         .await;
-    let dsn = format!("http://public@{}/42", server.address());
+    let endpoint = format!("{}/v1/event", server.uri());
     CodexFeedback::new()
         .snapshot(/*session_id*/ None)
         .with_feedback_diagnostics(FeedbackDiagnostics::default())
-        .upload_feedback_with_dsn(
+        .upload_feedback_to_hanzo(
             FeedbackUploadOptions {
                 classification: "bug",
                 reason: None,
@@ -88,29 +86,25 @@ async fn feedback_upload_archives_two_rollouts_that_can_be_extracted_and_read() 
                 logs_override: None,
             },
             &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
-            &dsn,
+            &endpoint,
+            hanzo::FEEDBACK_KEY,
             Instant::now() + UPLOAD_TIMEOUT,
         )
         .await?;
 
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 2);
-    let mut body = requests[1].body.clone();
-    if body.starts_with(&[0x1f, 0x8b]) {
-        let mut decoded = Vec::new();
-        GzDecoder::new(body.as_slice()).read_to_end(&mut decoded)?;
-        body = decoded;
-    }
-    let envelope = Envelope::from_slice(&body)?;
-    let mut items = envelope.items();
-    let Some(EnvelopeItem::Attachment(attachment)) = items.next() else {
-        anyhow::bail!("expected a rollout archive attachment");
-    };
-    assert_eq!(attachment.filename, "rollouts.tar.gz");
-    assert!(items.next().is_none());
+    let attachment_event: serde_json::Value = serde_json::from_slice(&requests[1].body)?;
+    assert_eq!(attachment_event["kind"], "rollouts.tar.gz");
+    assert_eq!(attachment_event["properties"]["encoding"], "hex");
+    let hex_body = attachment_event["log"]["body"].as_str().unwrap();
+    let archive_bytes = (0..hex_body.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex_body[i..i + 2], 16).unwrap())
+        .collect::<Vec<_>>();
 
     let extracted = tempfile::tempdir()?;
-    tar::Archive::new(GzDecoder::new(attachment.buffer.as_slice())).unpack(extracted.path())?;
+    tar::Archive::new(GzDecoder::new(archive_bytes.as_slice())).unpack(extracted.path())?;
     let files = fs::read_dir(extracted.path())?
         .map(|entry| {
             let entry = entry?;

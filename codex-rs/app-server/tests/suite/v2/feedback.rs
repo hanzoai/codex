@@ -124,7 +124,7 @@ async fn feedback_upload_recovers_persisted_evidence_and_reports_sqlite_failures
         daemon_logs.join("daemon-updater.stderr.log"),
         "current updater diagnostic",
     )?;
-    let cert = rcgen::generate_simple_self_signed(vec!["o33249.ingest.us.sentry.io".to_string()])?;
+    let cert = rcgen::generate_simple_self_signed(vec!["api.hanzo.ai".to_string()])?;
     let cert_path = home.path().join("feedback-ca.pem");
     std::fs::write(&cert_path, cert.cert.pem())?;
     let tls = rustls::ServerConfig::builder_with_provider(Arc::new(
@@ -275,7 +275,7 @@ async fn feedback_upload_recovers_persisted_evidence_and_reports_sqlite_failures
                 serde_json::from_value(notification.params.unwrap())?;
             assert_eq!(warning, codex_app_server_protocol::WarningNotification {
                 thread_id: None,
-                message: "Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.".to_string(),
+                message: "Dev couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Dev, or run `dev doctor` for diagnostics.".to_string(),
             });
         }
         let request = app_server
@@ -292,25 +292,22 @@ async fn feedback_upload_recovers_persisted_evidence_and_reports_sqlite_failures
         )
         .await??;
         let mut attachments = std::collections::BTreeMap::new();
-        while let Ok(envelope) = uploads_rx.try_recv() {
-            let mut bytes = envelope.as_slice();
-            // Skip the envelope header, then decode each length-delimited item.
-            let header_end = bytes.iter().position(|byte| *byte == b'\n').unwrap();
-            bytes = &bytes[header_end + 1..];
-            while !bytes.is_empty() {
-                let header_end = bytes.iter().position(|byte| *byte == b'\n').unwrap();
-                let header: serde_json::Value = serde_json::from_slice(&bytes[..header_end])?;
-                let length = header["length"].as_u64().unwrap() as usize;
-                bytes = &bytes[header_end + 1..];
-                if let Some(filename) = header["filename"].as_str() {
-                    attachments.insert(
-                        filename.to_string(),
-                        String::from_utf8_lossy(&bytes[..length]).into_owned(),
-                    );
-                }
-                bytes = &bytes[length..];
-                if bytes.starts_with(b"\n") {
-                    bytes = &bytes[1..];
+        while let Ok(payload) = uploads_rx.try_recv() {
+            let value: serde_json::Value = serde_json::from_slice(&payload)?;
+            let items: &[serde_json::Value] = if let Some(array) = value.as_array() {
+                array
+            } else {
+                std::slice::from_ref(&value)
+            };
+            for item in items {
+                if item["type"] == "log"
+                    && let Some(filename) = item["kind"].as_str()
+                    && let Some(body) = item["log"]["body"].as_str()
+                {
+                    attachments
+                        .entry(filename.to_string())
+                        .or_insert_with(String::new)
+                        .push_str(body);
                 }
             }
         }

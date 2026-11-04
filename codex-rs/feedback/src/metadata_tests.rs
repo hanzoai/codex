@@ -3,8 +3,6 @@
 use super::*;
 use crate::CodexFeedback;
 use pretty_assertions::assert_eq;
-use sentry::protocol::Envelope;
-use sentry::protocol::EnvelopeItem;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -61,7 +59,7 @@ fn dynamic_tags_survive_upload_alongside_static_fields() {
         "bug", /*reason*/ None, /*tags*/ None, /*session_source*/ None,
     );
     expected.extend([
-        ("thread_id".to_string(), snapshot.thread_id),
+        ("thread_id".to_string(), snapshot.thread_id.clone()),
         ("classification".to_string(), "bug".to_string()),
         (
             "cli_version".to_string(),
@@ -69,10 +67,10 @@ fn dynamic_tags_survive_upload_alongside_static_fields() {
         ),
     ]);
     assert_eq!(event.tags, expected);
-    let mut envelope = Envelope::new();
-    envelope.add_item(EnvelopeItem::Event(event));
-    let (_, size) = crate::upload::encode_envelope(&envelope).unwrap();
-    assert!(size < crate::MAX_EVENT_BYTES);
+    let bytes = event
+        .to_hanzo_event_bytes(&snapshot.thread_id, "bug")
+        .unwrap();
+    assert!(bytes.len() < crate::MAX_EVENT_BYTES);
 }
 
 #[test]
