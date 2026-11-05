@@ -111,8 +111,20 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         visibility: ModelVisibility::None,
         supported_in_api: true,
         priority: 99,
-        additional_speed_tiers: Vec::new(),
-        service_tiers: Vec::new(),
+        additional_speed_tiers: if known.is_some() {
+            vec!["fast".to_string()]
+        } else {
+            Vec::new()
+        },
+        service_tiers: if known.is_some() {
+            vec![codex_protocol::openai_models::ModelServiceTier {
+                id: "priority".to_string(),
+                name: "Fast".to_string(),
+                description: "2x speed, increased usage".to_string(),
+            }]
+        } else {
+            Vec::new()
+        },
         default_service_tier: None,
         available_access_programs: None,
         availability_nux: None,
