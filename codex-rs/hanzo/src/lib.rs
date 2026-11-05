@@ -47,6 +47,8 @@ pub const BACKGROUND_SERVER: bool = false;
 pub const MONOCHROME: bool = true;
 /// One line under the input: the status line takes the row the shortcut hint would.
 pub const SEPARATE_STATUS_LINE: bool = false;
+/// No multi-line onboarding command list or startup tip banner on launch.
+pub const WELCOME_BANNER: bool = false;
 
 /// Keep light terminals readable and dark input bars much subtler than the upstream default.
 pub fn input_background(background: (u8, u8, u8), light: bool) -> (u8, u8, u8) {
