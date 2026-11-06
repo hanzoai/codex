@@ -1027,7 +1027,8 @@ impl ChatWidget {
                     .map(|tier| tier.name)
             })
             .filter(|_| {
-                self.has_chatgpt_account || hanzo::is_hanzo(&self.config.model_provider_id)
+                self.has_chatgpt_account
+                    || hanzo::is_hanzo(self.config.model_provider.base_url.as_deref())
             })
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();

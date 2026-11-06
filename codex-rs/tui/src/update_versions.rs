@@ -1,9 +1,28 @@
 #[cfg(any(not(debug_assertions), test))]
 pub(crate) fn is_newer(latest: &str, current: &str) -> Option<bool> {
     match (parse_version(latest), parse_version(current)) {
-        (Some(l), Some(c)) => Some(l > c),
+        (Some(l), Some(c)) => {
+            if is_retracted_or_foreign_version(l, c) {
+                return Some(false);
+            }
+            Some(l > c)
+        }
         _ => None,
     }
+}
+
+/// Guards the 0.7.x -> 0.8.x release line against upstream Codex versions (0.90.0+ / 0.166.0),
+/// runaway patch numbers (>= 100), and pre-reset npm versions (>= 2.0.0).
+#[cfg(any(not(debug_assertions), test))]
+fn is_retracted_or_foreign_version(latest: (u64, u64, u64), current: (u64, u64, u64)) -> bool {
+    let (lat_maj, lat_min, lat_pat) = latest;
+    let (cur_maj, cur_min, _) = current;
+    if cur_maj == 0 && cur_min < 50 {
+        if (lat_maj == 0 && lat_min >= 50) || lat_maj >= 2 || (lat_maj == 0 && lat_pat >= 100) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(any(not(debug_assertions), test))]
@@ -82,6 +101,16 @@ mod tests {
         assert_eq!(is_newer("0.11.0", "0.11.1"), Some(false));
         assert_eq!(is_newer("1.0.0", "0.9.9"), Some(true));
         assert_eq!(is_newer("0.9.9", "1.0.0"), Some(false));
+        assert_eq!(is_newer("0.8.0", "0.7.7"), Some(true));
+    }
+
+    #[test]
+    fn retracted_or_upstream_codex_versions_are_ignored_on_0_7_line() {
+        assert_eq!(is_newer("0.166.0", "0.7.7"), Some(false));
+        assert_eq!(is_newer("0.106.0", "0.7.7"), Some(false));
+        assert_eq!(is_newer("0.105.0", "0.7.7"), Some(false));
+        assert_eq!(is_newer("0.7.196", "0.7.7"), Some(false));
+        assert_eq!(is_newer("3.0.13", "0.7.7"), Some(false));
     }
 
     #[test]
