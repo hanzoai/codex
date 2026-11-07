@@ -937,32 +937,6 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
-            SlashCommand::Model if !trimmed.is_empty() => {
-                // Hanzo: `/model <name>` switches this session directly.
-                let offered: Vec<String> = self
-                    .model_catalog
-                    .try_list_models()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|preset| preset.model)
-                    .collect();
-                match hanzo::model::pick(trimmed, &offered) {
-                    hanzo::model::Pick::One(model) => {
-                        self.add_info_message(format!("Model set to {model}."), /*hint*/ None);
-                        self.app_event_tx.send(AppEvent::SelectSessionModel {
-                            model,
-                            effort: None,
-                        });
-                    }
-                    hanzo::model::Pick::Many(names) => self.add_error_message(format!(
-                        "`{trimmed}` fits {}. Name one of them.",
-                        names.join(", ")
-                    )),
-                    hanzo::model::Pick::None => self.add_error_message(format!(
-                        "No model matches `{trimmed}`. Use /model to see the list."
-                    )),
-                }
-            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
