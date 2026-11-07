@@ -25,7 +25,7 @@ fn first_screen_fits_80_columns_and_short_viewports() {
                 &mut buffer,
                 Some(ComposerState::Empty),
                 MotionMode::Animated,
-            )),
+            ),
             Some(FRAME_INTERVAL),
         );
         let stage = animation.stage.unwrap();
@@ -70,7 +70,7 @@ fn first_screen_fits_80_columns_and_short_viewports() {
             &mut buffer,
             Some(ComposerState::Empty),
             MotionMode::Animated,
-        )),
+        ),
         None,
     );
     assert_eq!(animation.stage, None);

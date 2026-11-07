@@ -1,12 +1,11 @@
 ---
 source: tui/src/history_cell/tests.rs
-assertion_line: 1379
 expression: rendered
 ---
-╭──────────────────────────────────────────────────────────────────────╮
-│ ✨ Update available! 0.0.0 -> 9.9.9                                  │
-│ Run sh -c 'curl -fsSL https://hanzo.sh | sh -s -- -q dev' to update. │
-│                                                                      │
-│ See full release notes:                                              │
-│ https://github.com/hanzoai/dev/releases/latest                       │
-╰──────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.0.0 -> 9.9.9                                             │
+│ Run sh -c 's=$(curl -fsSL https://hanzo.sh) && sh -c "$s" sh -q dev' to update. │
+│                                                                                 │
+│ See full release notes:                                                         │
+│ https://github.com/hanzoai/dev/releases/latest                                  │
+╰─────────────────────────────────────────────────────────────────────────────────╯

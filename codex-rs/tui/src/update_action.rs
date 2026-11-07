@@ -161,7 +161,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    r#"s=$(curl -fsSL https://hanzo.sh) && printf '%s\n' "$s" | sh -s -- -q dev"#
+                    r#"s=$(curl -fsSL https://hanzo.sh) && sh -c "$s" sh -q dev"#
                 ][..],
             )
         );
