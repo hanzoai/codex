@@ -48,9 +48,9 @@ async fn exits_non_zero_when_required_mcp_server_fails_to_initialize() -> anyhow
     let stderr = std::str::from_utf8(&first.get_output().stderr)?;
     let warning = stderr
         .lines()
-        .find(|line| line.contains("codex exec --trust"))
+        .find(|line| line.contains("dev exec --trust"))
         .expect("project trust warning");
-    insta::assert_snapshot!(warning, @"warning: Untrusted project-local configuration is disabled. Run `codex exec --trust` to allow project configuration and MCP servers for this and future chats in the project, including MCP commands outside the sandbox. Explicitly untrusted projects must have their trust setting updated first.");
+    insta::assert_snapshot!(warning, @"warning: Untrusted project-local configuration is disabled. Run `dev exec --trust` to allow project configuration and MCP servers for this and future chats in the project, including MCP commands outside the sandbox. Explicitly untrusted projects must have their trust setting updated first.");
     expect_mcp_failure(&["--sandbox", "read-only", "--trust"]);
     expect_mcp_failure(&[]);
 
