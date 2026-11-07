@@ -83,7 +83,7 @@ async fn remote_resume_restores_saved_server_profile_without_permission_override
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if let Some(codex_app_server_client::AppServerEvent::ServerNotification(notification)) =
-                server.next_event().await
+                server.next_event().await.map(|event| event.event)
                 && let codex_app_server_protocol::ServerNotification::ThreadSettingsUpdated(
                     settings,
                 ) = *notification
@@ -414,7 +414,7 @@ async fn rollout_maintenance_contention_disables_cached_legacy_resume_shortcut()
         )
         .await?;
 
-    assert_eq!(app_server.next_request_id, next_request_id + 3);
+    assert_eq!(app_server.next_request_id, next_request_id + 4);
     assert_eq!(resumed.session.thread_id, thread_id);
     assert_eq!(
         app_server

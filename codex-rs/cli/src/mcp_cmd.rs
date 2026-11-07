@@ -48,7 +48,6 @@ use codex_utils_redacted_string::RedactedString;
 use crate::cloud_config;
 use crate::mcp_login::McpLoginMode;
 use crate::mcp_login::perform_oauth_login_retry_without_scopes;
-use crate::plugin_cmd::load_cli_auth_manager;
 
 #[cfg(test)]
 #[path = "mcp_cmd_tests.rs"]
@@ -535,7 +534,7 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
 async fn load_mcp_manager(config: &Config) -> Result<McpManager> {
     let plugins_manager = Arc::new(plugins_manager_for_config(
         config,
-        load_cli_auth_manager(config).await?,
+        AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ true).await?,
     ));
     Ok(McpManager::new(plugins_manager))
 }
@@ -693,7 +692,8 @@ async fn run_list(config: &Config, list_args: ListArgs) -> Result<()> {
         AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ true).await?;
     let auth = auth_manager.auth().await;
     let mcp_servers = mcp_manager.configured_servers(config).await;
-    let effective_mcp_servers = mcp_manager.effective_servers(config, auth.as_ref()).await;
+    let runtime_config = mcp_manager.runtime_config(config).await;
+    let effective_mcp_servers = codex_mcp::effective_mcp_servers(&runtime_config, auth.as_ref());
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
     entries.sort_by_key(|(name, _)| *name);
@@ -710,6 +710,8 @@ async fn run_list(config: &Config, list_args: ListArgs) -> Result<()> {
         config.mcp_oauth_credentials_store_mode,
         config.auth_keyring_backend_kind(),
         auth.as_ref(),
+        Some(&auth_manager),
+        &runtime_config.ema_state,
         &runtime_context,
     )
     .await;

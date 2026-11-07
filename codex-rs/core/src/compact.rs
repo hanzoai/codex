@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::Prompt;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
+use crate::compact_pending_input::is_retained_pending_mail;
 use crate::context::BaseInstructionsFragment;
 use crate::context::CompactionSummary;
 use crate::context::ContextualUserFragment;
@@ -52,7 +53,6 @@ use codex_protocol::models::ContentItemKind;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_utils_output_truncation::approx_token_count;
@@ -300,7 +300,11 @@ async fn run_compact_task_inner_impl(
         // Clone is required because of the loop
         let mut turn_input = history
             .clone()
-            .for_prompt(&turn_context.model_info().input_modalities);
+            .for_prompt(
+                &turn_context.model_info().input_modalities,
+                sess.services.image_store.as_ref(),
+            )
+            .await;
         sess.services
             .executed_tool_calls
             .attach_to_compaction_prompt(&mut turn_input);
@@ -319,6 +323,7 @@ async fn run_compact_task_inner_impl(
         let prompt = Prompt {
             input: turn_input,
             base_instructions,
+            prompt_cache_ttl: turn_context.prompt_cache_ttl,
             cyber_access_program: turn_context.cyber_access_program,
             ..Default::default()
         };
@@ -352,6 +357,7 @@ async fn run_compact_task_inner_impl(
                     e.details(),
                     CodexErrorDetails::SessionBudgetExceeded
                         | CodexErrorDetails::ResponseIncomplete(_)
+                        | CodexErrorDetails::Fatal(_)
                 ) =>
             {
                 return Err(e);
@@ -410,19 +416,47 @@ async fn run_compact_task_inner_impl(
         // belongs to this compaction turn.
         summary_item.set_turn_id_if_missing(&turn_context.sub_id);
     }
+    // Use the final compactor input, so an overflow retry cannot restore discarded input.
+    let pending_sequence =
+        crate::compact_pending_input::pending_mail_sequence(history.annotated_items());
+    if let Some(first) = pending_sequence {
+        let summary = new_history
+            .pop()
+            .ok_or_else(|| CodexErr::Fatal("local compaction summary is missing".to_string()))?;
+        new_history.extend(
+            history
+                .annotated_items()
+                .iter()
+                .filter(|envelope| is_retained_pending_mail(envelope, first))
+                .cloned(),
+        );
+        new_history.sort_by_key(|envelope| {
+            envelope
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.history_sequence)
+        });
+        new_history = crate::compact_remote_v2::truncate_retained_messages_for_remote_compaction(
+            new_history,
+            COMPACT_USER_MESSAGE_MAX_TOKENS,
+            &history.file_audio_durations,
+        );
+        new_history =
+            crate::compact_pending_input::insert_summary(new_history, summary, pending_sequence);
+    }
+    let rendered = world_state.render_full_with_host_roster().await;
     let (window_number, window_ids) = sess.advance_auto_compact_window().await;
-
-    let (new_history, world_state_baseline) = build_compaction_replacement_history(
-        sess.as_ref(),
-        &replacement_step_context,
-        &world_state,
-        new_history,
-    )
-    .await;
+    let (updates, world_state_baseline) = sess
+        .assemble_initial_context(&replacement_step_context, rendered)
+        .await;
+    let (prefix, context) = split_prefix_updates(updates);
+    let new_history =
+        assemble_compaction_history(new_history, prefix, merge_world_state_updates(context));
     sess.replace_compacted_history(
         new_history,
         replacement_step_context.to_turn_context_item(),
         world_state_baseline,
+        /*rejected_audio_file_ids*/ Default::default(),
         CompactedHistoryMetadata {
             input_goal_ids,
             message: summary_text,
@@ -439,10 +473,6 @@ async fn run_compact_task_inner_impl(
 
     sess.emit_turn_item_completed(&turn_context, compaction_item)
         .await;
-    let warning = EventMsg::Warning(WarningEvent {
-        message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),
-    });
-    sess.send_event(&turn_context, warning).await;
     Ok(summary_suffix)
 }
 
@@ -831,6 +861,7 @@ async fn drain_to_completed(
     prompt: &Prompt,
     phase: CompactionPhase,
 ) -> CodexResult<CompactionResponse> {
+    let mut includes_reasoning = turn_context.model_info().use_responses_lite;
     let mut stream = client_session
         .stream(
             prompt,
@@ -861,7 +892,7 @@ async fn drain_to_completed(
             // Keep each attempt isolated until the response completes successfully.
             Ok(ResponseEvent::OutputItemDone(item)) => output.push(item),
             Ok(ResponseEvent::ServerReasoningIncluded(included)) => {
-                sess.set_server_reasoning_included(included).await;
+                includes_reasoning = included;
             }
             Ok(ResponseEvent::RateLimits(snapshot)) => {
                 sess.update_rate_limits(turn_context, snapshot).await;
@@ -895,8 +926,12 @@ async fn drain_to_completed(
                     usage_metadata.as_ref(),
                 )
                 .await;
-                sess.update_token_usage_info(turn_context, token_usage.as_ref())
-                    .await?;
+                sess.update_token_usage_info(
+                    turn_context,
+                    token_usage.as_ref(),
+                    includes_reasoning,
+                )
+                .await?;
                 return Ok(CompactionResponse {
                     response_id,
                     output,

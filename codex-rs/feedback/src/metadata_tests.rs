@@ -1,7 +1,7 @@
 //! Exercise dynamic tag collection, upload serialization, and bounded updates.
 
-use super::*;
 use crate::CodexFeedback;
+use crate::*;
 use pretty_assertions::assert_eq;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;

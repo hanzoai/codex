@@ -254,13 +254,17 @@ pub(super) async fn build_test_processor(
         Arg0DispatchPaths::default(),
         Arc::new(codex_config::NoopThreadConfigLoader),
     );
-    let analytics_events_client =
-        analytics_events_client_from_config(Arc::clone(&auth_manager), config.as_ref());
+    let analytics_events_client = analytics_events_client_from_config(
+        Arc::clone(&auth_manager),
+        config.as_ref(),
+        /*runtime_auth_slot*/ None,
+    );
     let outgoing = Arc::new(OutgoingMessageSender::new(
         outgoing_tx,
         analytics_events_client.clone(),
     ));
     let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
+        cloud_skill_provider: None,
         outgoing,
         analytics_events_client,
         arg0_paths: Arg0DispatchPaths::default(),
@@ -272,11 +276,13 @@ pub(super) async fn build_test_processor(
         log_db: None,
         state_db: None,
         config_warnings: Vec::new(),
+        startup_warnings_tx: mpsc::unbounded_channel().0,
         session_source: SessionSource::VSCode,
         user_verification: Arc::new(crate::user_verification::Service::new(Arc::clone(
             &auth_manager,
         ))),
         auth_manager,
+        runtime_auth_slot: None,
         installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
         code_mode_session_provider: None,
         rpc_transport: AppServerRpcTransport::Stdio,

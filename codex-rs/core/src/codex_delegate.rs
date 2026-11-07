@@ -103,12 +103,18 @@ pub(crate) async fn run_codex_thread_interactive(
     let mut thread_extension_init = codex_extension_api::ExtensionDataInit::default();
     thread_extension_init.insert(isolation);
     let spawn_result = Session::spawn(SessionSpawnArgs {
+        attached_thread: false,
         startup: Some(Arc::clone(&startup)),
         config,
+        prompt_cache_key: parent_session
+            .services
+            .model_client
+            .prompt_cache_key_policy(),
         allow_provider_model_fallback: false,
         instructions,
         installation_id: parent_session.installation_id.clone(),
         auth_manager,
+        runtime_auth: parent_session.services.runtime_auth.clone(),
         models_manager,
         git_root_discovery: Arc::clone(&parent_session.services.git_root_discovery),
         environment_manager: parent_session
@@ -307,6 +313,7 @@ pub(crate) async fn run_codex_thread_one_shot(
                         parent_turn_id: None,
                         root_turn_id: None,
                         residency_guard: None,
+                        message_delivery: None,
                     })
                     .await;
                 child_cancel.cancel();

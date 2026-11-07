@@ -5,6 +5,30 @@
 use super::*;
 
 impl ChatComposer {
+    pub(crate) fn set_status_line(&mut self, status_line: Option<FooterContent>) -> bool {
+        if self.footer.status_line_value == status_line {
+            return false;
+        }
+        self.footer.status_line_value = status_line;
+        true
+    }
+
+    pub(crate) fn set_status_line_enabled(&mut self, enabled: bool) -> bool {
+        if self.footer.status_line_enabled == enabled {
+            return false;
+        }
+        self.footer.status_line_enabled = enabled;
+        true
+    }
+
+    pub(crate) fn set_side_conversation_context_label(&mut self, label: Option<String>) -> bool {
+        if self.footer.side_conversation_context_label == label {
+            return false;
+        }
+        self.footer.side_conversation_context_label = label;
+        true
+    }
+
     pub(super) fn status_surface_height(&self, options: ComposerRenderOptions<'_>) -> u16 {
         u16::from(options.separate_status_line && self.footer.status_line_enabled)
     }
@@ -28,6 +52,16 @@ impl ChatComposer {
         if area.is_empty() {
             return;
         }
+        if options.unfocused {
+            if let Some(content) = self.status_line_content() {
+                crate::bottom_pane::footer::render_unfocused_status(
+                    content.clone().into_hyperlink_line().line.to_string(),
+                    area,
+                    buf,
+                );
+            }
+            return;
+        }
         let mut props = self.footer_props();
         let show_cycle_hint = !props.is_task_running
             && !self.blocks_direct_input
@@ -43,9 +77,7 @@ impl ChatComposer {
         props.is_task_running = false;
         let line = passive_footer_status_line(&props);
         let full = self.mode_indicator_line(show_cycle_hint);
-        let left_width = line
-            .as_ref()
-            .map_or(/*default*/ 0, |line| line.width() as u16);
+        let left_width = line.as_ref().map_or(/*default*/ 0, FooterContent::width);
         let full_width = full
             .as_ref()
             .map_or(/*default*/ 0, |line| line.width() as u16);
@@ -65,23 +97,25 @@ impl ChatComposer {
             .effort_status_line_transition
             .as_ref()
             .filter(|transition| !transition.is_finished());
-        let line = if let Some(transition) = transition {
-            transition.render_line(line.as_ref(), width)
+        let content = if let Some(transition) = transition {
+            let current = line.map(FooterContent::into_hyperlink_line);
+            transition
+                .render_line(current, width)
+                .map(FooterContent::HyperlinkLine)
         } else {
             line
         };
-        if let Some(line) = line {
-            render_footer_line(
-                area,
+        if let Some(content) = content {
+            content.render(
+                Rect {
+                    width,
+                    ..inset_footer_hint_area(area)
+                },
                 buf,
-                truncate_line_with_ellipsis_if_overflow(line, usize::from(width)),
             );
         }
         if let Some(right) = right {
             render_context_right(area, buf, &right);
-        }
-        if let Some(url) = self.footer.status_line_hyperlink_url.as_deref() {
-            mark_underlined_hyperlink(buf, area, url);
         }
         if transition.is_some()
             && let Some(frame_requester) = &self.frame_requester

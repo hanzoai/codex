@@ -262,7 +262,7 @@ fn create_approval_parameters(
         let mut additional_permissions = permission_profile_schema();
         additional_permissions.description = Some(
             "Sandboxed filesystem or network access for this command; only with `sandbox_permissions: \"with_additional_permissions\"`."
-                .to_string(),
+                .into(),
         );
         properties.insert("additional_permissions".to_string(), additional_permissions);
     }
@@ -279,7 +279,7 @@ fn permission_profile_schema() -> JsonSchema {
         /*required*/ None,
         Some(false.into()),
     );
-    schema.description = Some("Filesystem or network access request.".to_string());
+    schema.description = Some("Filesystem or network access request.".into());
     schema
 }
 
@@ -294,7 +294,7 @@ fn network_permissions_schema() -> JsonSchema {
         /*required*/ None,
         Some(false.into()),
     );
-    schema.description = Some("Network access request.".to_string());
+    schema.description = Some("Network access request.".into());
     schema
 }
 
@@ -325,7 +325,7 @@ fn file_system_permissions_schema() -> JsonSchema {
         /*required*/ None,
         Some(false.into()),
     );
-    schema.description = Some("Filesystem access request.".to_string());
+    schema.description = Some("Filesystem access request.".into());
     schema
 }
 

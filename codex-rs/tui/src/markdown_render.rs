@@ -42,6 +42,7 @@
 //! retaining its usual modifiers and falling back when a scope has no foreground.
 //! Inline code and local file paths share the active syntax theme's raw-markup foreground.
 
+use crate::line_truncation::span_width;
 use crate::markdown_text_merge::DecodedTextMerge;
 use crate::render::highlight::current_syntax_theme;
 use crate::render::highlight::foreground_style_for_scopes;
@@ -52,6 +53,7 @@ use crate::style::accent_color;
 use crate::style::table_separator_style;
 use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::terminal_hyperlinks::remap_wrapped_line;
+use crate::terminal_hyperlinks::source_span_width;
 use crate::terminal_hyperlinks::visible_lines;
 use crate::terminal_hyperlinks::web_destination;
 use crate::width::char_width;
@@ -136,7 +138,12 @@ impl Default for MarkdownStyles {
 impl MarkdownStyles {
     fn for_theme(theme: &syntect::highlighting::Theme) -> Self {
         let foreground = |scopes: &[&str]| {
-            foreground_style_for_scopes_with_theme(theme, scopes).unwrap_or_default()
+            let mut style =
+                foreground_style_for_scopes_with_theme(theme, scopes).unwrap_or_default();
+            style.fg = style.fg.map(|foreground| {
+                crate::style::readable_color_on(foreground, /*background*/ None)
+            });
+            style
         };
         Self {
             h1: foreground(&["markup.heading.1.markdown", "markup.heading.markdown"])
@@ -205,6 +212,36 @@ impl IndentContext {
     }
 }
 
+/// Measures each span of an append-only line at most once, when a link needs its column.
+#[derive(Clone, Debug, Default)]
+struct SpanColumns {
+    measured_spans: usize,
+    width: usize,
+}
+
+impl SpanColumns {
+    fn measure(&mut self, line: &HyperlinkLine, width: impl Fn(&Span<'_>) -> usize) -> usize {
+        self.width += line.line.spans[self.measured_spans..]
+            .iter()
+            .map(width)
+            .sum::<usize>();
+        self.measured_spans = line.line.spans.len();
+        self.width
+    }
+
+    fn append_annotated(&mut self, line: &mut HyperlinkLine, mut appended: HyperlinkLine) {
+        if !appended.hyperlinks.is_empty() {
+            let shift = self.measure(line, span_width);
+            line.hyperlinks
+                .extend(appended.hyperlinks.into_iter().map(|mut link| {
+                    link.columns = link.columns.start + shift..link.columns.end + shift;
+                    link
+                }));
+        }
+        line.line.spans.append(&mut appended.line.spans);
+    }
+}
+
 /// Styled content of a single cell in the table being parsed.
 ///
 /// A cell can contain multiple lines (hard breaks inside the cell) and rich inline spans (bold,
@@ -214,6 +251,7 @@ impl IndentContext {
 struct TableCell {
     lines: Vec<HyperlinkLine>,
     copies: Vec<crate::markdown_copy::CopyLine>,
+    columns: SpanColumns,
 }
 
 // TableCell mutators inlined — called per-span during table event parsing.
@@ -226,11 +264,7 @@ impl TableCell {
         }
     }
 
-    fn push_annotated(
-        &mut self,
-        mut appended: HyperlinkLine,
-        inline: &[crate::markdown_copy::Inline],
-    ) {
+    fn push_annotated(&mut self, appended: HyperlinkLine, inline: &[crate::markdown_copy::Inline]) {
         self.ensure_line();
         if let Some(copy) = self.copies.last_mut() {
             copy.push(
@@ -244,13 +278,7 @@ impl TableCell {
             );
         }
         if let Some(line) = self.lines.last_mut() {
-            let shift = line.width();
-            line.line.spans.append(&mut appended.line.spans);
-            line.hyperlinks
-                .extend(appended.hyperlinks.into_iter().map(|mut link| {
-                    link.columns = link.columns.start + shift..link.columns.end + shift;
-                    link
-                }));
+            self.columns.append_annotated(line, appended);
         }
     }
 
@@ -258,6 +286,7 @@ impl TableCell {
     fn hard_break(&mut self) {
         self.lines.push(HyperlinkLine::new(Line::default()));
         self.copies.push(Default::default());
+        self.columns = SpanColumns::default();
     }
 
     fn plain_text(&self) -> String {
@@ -416,6 +445,22 @@ pub(crate) fn render_markdown_lines_with_width_cwd_and_hidden_link_destinations(
     cwd: Option<&Path>,
     is_hidden_link_destination: &dyn Fn(&str) -> bool,
 ) -> Vec<HyperlinkLine> {
+    render_markdown_lines_with_list_spacing(
+        input,
+        width,
+        cwd,
+        is_hidden_link_destination,
+        ListSpacing::AfterMultiline,
+    )
+}
+
+pub(crate) fn render_markdown_lines_with_list_spacing(
+    input: &str,
+    width: Option<usize>,
+    cwd: Option<&Path>,
+    is_hidden_link_destination: &dyn Fn(&str) -> bool,
+    list_spacing: ListSpacing,
+) -> Vec<HyperlinkLine> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
@@ -426,6 +471,7 @@ pub(crate) fn render_markdown_lines_with_width_cwd_and_hidden_link_destinations(
         math.events(Parser::new_ext(&math.markdown, options).into_offset_iter()),
     ));
     let mut w = Writer::new(input, width, cwd, is_hidden_link_destination);
+    w.list_spacing = list_spacing;
     // Drop the consumed parser before the rendering state, including on unwind.
     let mut parser = parser;
     w.run(&mut parser);
@@ -483,13 +529,15 @@ struct Writer<'a, 'policy> {
     in_code_block: bool,
     code_block_lang: Option<String>,
     code_block_buffer: String,
-    code_block_content_end: usize,
+    code_block_content: Range<usize>,
     wrap_width: Option<usize>,
     cwd: Option<PathBuf>,
     is_hidden_link_destination: &'policy dyn Fn(&str) -> bool,
     line_ends_with_local_link_target: bool,
     pending_local_link_soft_break: bool,
     current_line_content: Option<HyperlinkLine>,
+    display_columns: SpanColumns,
+    source_columns: SpanColumns,
     current_initial_indent: Vec<Span<'static>>,
     current_subsequent_indent: Vec<Span<'static>>,
     current_line_style: Style,
@@ -528,13 +576,15 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             in_code_block: false,
             code_block_lang: None,
             code_block_buffer: String::new(),
-            code_block_content_end: 0,
+            code_block_content: 0..0,
             wrap_width,
             cwd: cwd.map(Path::to_path_buf),
             is_hidden_link_destination,
             line_ends_with_local_link_target: false,
             pending_local_link_soft_break: false,
             current_line_content: None,
+            display_columns: SpanColumns::default(),
+            source_columns: SpanColumns::default(),
             current_initial_indent: Vec::new(),
             current_subsequent_indent: Vec::new(),
             current_line_style: Style::default(),
@@ -588,7 +638,8 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             Event::End(tag) => self.end_tag(tag, range),
             Event::Text(text) => {
                 if self.in_code_block {
-                    self.code_block_content_end = range.end;
+                    self.code_block_content.start = self.code_block_content.start.min(range.start);
+                    self.code_block_content.end = range.end;
                 }
                 self.text(text);
             }
@@ -655,7 +706,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                 self.quote_sources.push(source);
             }
             Tag::CodeBlock(kind) => {
-                self.code_block_content_end = range.end;
+                self.code_block_content = range.end..range.end;
                 let indent = match kind {
                     CodeBlockKind::Fenced(_) => None,
                     CodeBlockKind::Indented => Some(Span::from(" ".repeat(4))),
@@ -1147,9 +1198,13 @@ impl<'a, 'policy> Writer<'a, 'policy> {
         if let Some(lang) = self.code_block_lang.take() {
             let code = std::mem::take(&mut self.code_block_buffer);
             if !code.is_empty() {
+                // Disabled Markdown tables are rendered with the opening fence in the text
+                // event. Ordinary fenced code text starts after the opening fence.
+                let literal_markdown_fence = self.code_block_content.start == range.start
+                    && crate::table_detect::is_markdown_fence_info(&lang, /*marker_len*/ 0);
                 let diagram = if preferences::current().mermaid
                     && lang == "mermaid"
-                    && mermaid::has_closing_fence(self.input, range, self.code_block_content_end)
+                    && mermaid::has_closing_fence(self.input, range, self.code_block_content.end)
                 {
                     let indent =
                         Self::spans_display_width(&self.prefix_spans(self.pending_marker_line));
@@ -1165,7 +1220,16 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                     Some(diagram) => diagram,
                     None => highlight_code_to_lines(&code, &lang),
                 };
-                let source: std::sync::Arc<str> = code.into();
+                let source = if literal_markdown_fence
+                    && let Some(crate::markdown::CopyTarget::Code { content, .. }) =
+                        crate::markdown::extract_copy_targets(&code)
+                            .into_iter()
+                            .next()
+                {
+                    content
+                } else {
+                    code.into()
+                };
                 for hl_line in highlighted {
                     self.push_line(Line::default());
                     self.copy_line.code_source = Some(std::sync::Arc::clone(&source));
@@ -2440,6 +2504,8 @@ impl<'a, 'policy> Writer<'a, 'policy> {
         self.copy_line
             .push(line.spans.iter().map(|span| span.content.len()).sum(), &[]);
         self.current_line_content = Some(HyperlinkLine::new(line));
+        self.display_columns = SpanColumns::default();
+        self.source_columns = SpanColumns::default();
         self.current_line_in_code_block = self.in_code_block;
         self.line_ends_with_local_link_target = false;
 
@@ -2461,14 +2527,21 @@ impl<'a, 'policy> Writer<'a, 'policy> {
         }
         if let Some(line) = self.current_line_content.as_mut() {
             self.copy_line.push(span.content.len(), &self.copy_inline);
-            line.push_span(
-                span,
-                self.link.as_ref().map(|link| link.destination.as_str()),
-            );
+            if let Some(destination) = self
+                .link
+                .as_ref()
+                .and_then(|link| web_destination(&link.destination))
+            {
+                // Inline code and HTML retain source columns until the transcript expands tabs.
+                let start = self.source_columns.measure(line, source_span_width);
+                line.push_linked_span(span, start, destination);
+            } else {
+                line.line.push_span(span);
+            }
         }
     }
 
-    fn push_annotated(&mut self, mut appended: HyperlinkLine) {
+    fn push_annotated(&mut self, appended: HyperlinkLine) {
         if self.current_line_content.is_none() {
             self.push_line(Line::default());
         }
@@ -2482,13 +2555,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                     .sum(),
                 &self.copy_inline,
             );
-            let shift = line.width();
-            line.line.spans.append(&mut appended.line.spans);
-            line.hyperlinks
-                .extend(appended.hyperlinks.into_iter().map(|mut link| {
-                    link.columns = link.columns.start + shift..link.columns.end + shift;
-                    link
-                }));
+            self.display_columns.append_annotated(line, appended);
         }
     }
 
@@ -2675,20 +2742,13 @@ mod tests {
         let rendered =
             render_markdown_lines_with_width_and_cwd(markdown, Some(22), /*cwd*/ None);
         let source = rendered[0].source.as_ref().expect("blockquote source");
+        let styles = MarkdownStyles::default();
         assert_eq!(
             source.styled_range(0..source.text.len()),
             Line::from(vec![
-                Span::styled("block quote with ", MarkdownStyles::default().blockquote),
-                Span::styled(
-                    "content",
-                    MarkdownStyles::default()
-                        .blockquote
-                        .patch(MarkdownStyles::default().strong)
-                ),
-                Span::styled(
-                    " that should wrap nicely",
-                    MarkdownStyles::default().blockquote
-                ),
+                Span::styled("block quote with ", styles.blockquote),
+                Span::styled("content", styles.blockquote.patch(styles.strong)),
+                Span::styled(" that should wrap nicely", styles.blockquote),
             ])
         );
         let lines: Vec<_> = rendered.iter().map(|line| line.line.to_string()).collect();

@@ -29,12 +29,21 @@ async fn pin_action_updates_shared_section_state() -> Result<()> {
             AppEvent::ToggleAgentsOverviewPin { thread_id, pinned },
         ))
         .await?;
-        assert!(app.agents_overview.pending_pin_change.is_some());
-        let completed = rx.recv().await.expect("pin request completes");
-        assert!(matches!(
-            &completed,
-            AppEvent::AgentsOverviewPinToggled { .. }
-        ));
+        let pending = app
+            .agents_overview
+            .pending_pin_change
+            .expect("pin request started");
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                let event = rx.recv().await.expect("pin request completes");
+                if let AppEvent::AgentsOverviewPinToggled { request_id, .. } = &event
+                    && *request_id == pending
+                {
+                    return event;
+                }
+            }
+        })
+        .await?;
         app.agents_overview
             .refresh_notifications
             .insert(thread_id, Vec::new());
@@ -48,7 +57,7 @@ async fn pin_action_updates_shared_section_state() -> Result<()> {
         assert_eq!(
             threads
                 .iter()
-                .any(|thread| thread.id == started.session.thread_id.to_string()),
+                .any(|(thread, _)| thread.id == started.session.thread_id.to_string()),
             pinned
         );
     }
@@ -238,10 +247,20 @@ async fn archiving_selects_the_next_displayed_task() -> Result<()> {
                 let expected = match (grouping, filtered) {
                     (AgentsOverviewGrouping::Status, false) => vec![3, 2, 1, 4],
                     (AgentsOverviewGrouping::Status, true) => vec![3, 1, 4],
-                    (AgentsOverviewGrouping::Project | AgentsOverviewGrouping::Model, false) => {
+                    (
+                        AgentsOverviewGrouping::Project
+                        | AgentsOverviewGrouping::Directory
+                        | AgentsOverviewGrouping::Model,
+                        false,
+                    ) => {
                         vec![3, 4, 2, 1]
                     }
-                    (AgentsOverviewGrouping::Project | AgentsOverviewGrouping::Model, true) => {
+                    (
+                        AgentsOverviewGrouping::Project
+                        | AgentsOverviewGrouping::Directory
+                        | AgentsOverviewGrouping::Model,
+                        true,
+                    ) => {
                         vec![3, 4, 1]
                     }
                 };
@@ -311,6 +330,7 @@ async fn archiving_selects_the_next_displayed_task() -> Result<()> {
 async fn external_removals_preserve_adjacent_selection() {
     for grouping in [
         AgentsOverviewGrouping::Project,
+        AgentsOverviewGrouping::Directory,
         AgentsOverviewGrouping::Status,
         AgentsOverviewGrouping::Model,
     ] {
@@ -362,7 +382,9 @@ async fn external_removals_preserve_adjacent_selection() {
             );
             let expected = match grouping {
                 AgentsOverviewGrouping::Status => [ids[0], ids[3]],
-                AgentsOverviewGrouping::Project | AgentsOverviewGrouping::Model => [ids[3], ids[0]],
+                AgentsOverviewGrouping::Project
+                | AgentsOverviewGrouping::Directory
+                | AgentsOverviewGrouping::Model => [ids[3], ids[0]],
             };
             let archive = ServerNotification::ThreadArchived(ThreadArchivedNotification {
                 thread_id: ids[2].to_string(),
@@ -438,6 +460,7 @@ async fn hiding_tasks_keeps_selection_adjacent_in_display_order() -> Result<()> 
     let mut selections = Vec::new();
     for grouping in [
         AgentsOverviewGrouping::Project,
+        AgentsOverviewGrouping::Directory,
         AgentsOverviewGrouping::Status,
         AgentsOverviewGrouping::Model,
     ] {
@@ -467,13 +490,23 @@ async fn hiding_tasks_keeps_selection_adjacent_in_display_order() -> Result<()> 
             app.agents_overview.visible_thread_ids = view.thread_ids();
             app.chat_widget.show_bottom_pane_view(Box::new(view));
             let expected = match (grouping, filtered) {
-                // The preceding filtered case retains Other 2; rediscovered tasks append.
-                (AgentsOverviewGrouping::Status, false) => vec![3, 1, 4, 2],
+                // Status displays tasks newest first: 4, 3, 2, 1.
+                (AgentsOverviewGrouping::Status, false) => vec![3, 2, 1, 4],
                 (AgentsOverviewGrouping::Status, true) => vec![3, 1, 4],
-                (AgentsOverviewGrouping::Project | AgentsOverviewGrouping::Model, false) => {
+                (
+                    AgentsOverviewGrouping::Project
+                    | AgentsOverviewGrouping::Directory
+                    | AgentsOverviewGrouping::Model,
+                    false,
+                ) => {
                     vec![3, 4, 2, 1]
                 }
-                (AgentsOverviewGrouping::Project | AgentsOverviewGrouping::Model, true) => {
+                (
+                    AgentsOverviewGrouping::Project
+                    | AgentsOverviewGrouping::Directory
+                    | AgentsOverviewGrouping::Model,
+                    true,
+                ) => {
                     vec![3, 4, 1]
                 }
             };
@@ -584,6 +617,7 @@ async fn hiding_rename_target_does_not_transfer_draft_to_neighbor() -> Result<()
 async fn hidden_task_stays_hidden_through_activity_and_seed_until_explicit_resume() -> Result<()> {
     let (mut app, mut rx, _op_rx) = crate::app::tests::make_test_app_with_channels().await;
     let mut app_server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+    let backend_id = app_server.backend_id();
     let started = app_server.start_thread(&app.config).await?;
     let id = started.session.thread_id;
     app.enqueue_primary_thread_session(started.session, started.turns)
@@ -629,7 +663,8 @@ async fn hidden_task_stays_hidden_through_activity_and_seed_until_explicit_resum
         &app_server,
         request_id,
         Ok(AgentsOverviewThreadRefresh {
-            threads: HashMap::from([(id, Some(thread.clone()))]),
+            cleared_unread: Vec::new(),
+            threads: HashMap::from([(id, Some((thread.clone(), false)))]),
             last_messages: HashMap::new(),
             recent_seed_complete: true,
             discovery: None,
@@ -646,6 +681,7 @@ async fn hidden_task_stays_hidden_through_activity_and_seed_until_explicit_resum
         &mut tui,
         &mut app_server,
         SessionTarget {
+            backend_id,
             thread_id: id,
             path: None,
             cwd: None,
@@ -909,7 +945,11 @@ async fn lifecycle_removes_background_and_current_tasks_without_losing_the_dashb
             &app_server,
             request_id,
             Ok(AgentsOverviewThreadRefresh {
-                threads: stale_threads,
+                cleared_unread: Vec::new(),
+                threads: stale_threads
+                    .into_iter()
+                    .map(|(id, thread)| (id, thread.map(|thread| (thread, false))))
+                    .collect(),
                 last_messages: HashMap::new(),
                 recent_seed_complete: true,
                 discovery: None,
@@ -1012,6 +1052,7 @@ async fn lifecycle_removes_background_and_current_tasks_without_losing_the_dashb
             .send(AppEvent::AgentsOverviewThreadsLoaded {
                 request_id,
                 result: Ok(AgentsOverviewThreadRefresh {
+                    cleared_unread: Vec::new(),
                     threads: HashMap::new(),
                     last_messages: HashMap::new(),
                     recent_seed_complete: true,

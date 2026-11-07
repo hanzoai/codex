@@ -62,6 +62,7 @@ fn session_end_ignores_successful_output() {
 fn handler(matcher: Option<&str>) -> ConfiguredHandler {
     ConfiguredHandler {
         builtin: false,
+        plugin_trust: None,
         event_name: HookEventName::SessionEnd,
         matcher: matcher
             .map(|pattern| crate::engine::HookMatcher::new(pattern).expect("valid matcher")),

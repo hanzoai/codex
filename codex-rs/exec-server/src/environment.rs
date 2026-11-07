@@ -1,6 +1,7 @@
 mod connect_options;
 mod discovery_recovery;
 mod discovery_v2;
+pub use discovery_v2::supports_capability_discovery_v2;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -71,6 +72,8 @@ pub const CODEX_EXEC_SERVER_NOISE_CHATGPT_ACCOUNT_ID_ENV_VAR: &str =
 pub enum EnvironmentConnectionState {
     /// An initialized exec-server connection is available.
     Connected,
+    /// An established session is unavailable while its transport is being recovered.
+    Recovering,
     /// No initialized exec-server connection is currently available.
     Disconnected,
 }
@@ -1068,6 +1071,15 @@ impl Environment {
                 let connection_state = client.subscribe_connection_state();
                 let client = client.get().await?;
                 let discover = || async {
+                    if params.roots.iter().any(|root| {
+                        root.sandbox.as_ref().is_some_and(|sandbox| {
+                            sandbox.windows_sandbox_selection == crate::WindowsSandboxSelection::Mxc
+                        })
+                    }) {
+                        let info = client.environment_info().await?;
+                        crate::sandbox_selection::validate_remote_mxc(&info)
+                            .map_err(|error| ExecServerError::Protocol(error.to_string()))?;
+                    }
                     if params.roots.iter().any(|root| {
                         root.sandbox
                             .as_ref()

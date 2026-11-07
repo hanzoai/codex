@@ -15,6 +15,8 @@ use codex_protocol::ThreadId;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_KEY as APPROVAL_META_KIND_KEY;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_MCP_TOOL_CALL as APPROVAL_META_KIND_MCP_TOOL_CALL;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_TOOL_SUGGESTION as APPROVAL_META_KIND_TOOL_SUGGESTION;
+use codex_protocol::mcp_approval_meta::CANCELLATION_REASON_KEY;
+use codex_protocol::mcp_approval_meta::McpApprovalCancellationReason;
 use codex_protocol::mcp_approval_meta::PERSIST_ALWAYS as APPROVAL_PERSIST_ALWAYS_VALUE;
 use codex_protocol::mcp_approval_meta::PERSIST_KEY as APPROVAL_PERSIST_KEY;
 use codex_protocol::mcp_approval_meta::PERSIST_SESSION as APPROVAL_PERSIST_SESSION_VALUE;
@@ -175,6 +177,7 @@ pub(crate) struct McpServerElicitationFormRequest {
     message: String,
     approval_display_params: Vec<McpToolApprovalDisplayParam>,
     response_mode: McpServerElicitationResponseMode,
+    is_tool_approval: bool,
     fields: Vec<McpServerElicitationField>,
     tool_suggestion: Option<ToolSuggestionRequest>,
 }
@@ -330,6 +333,7 @@ impl McpServerElicitationFormRequest {
             message,
             approval_display_params,
             response_mode,
+            is_tool_approval,
             fields,
             tool_suggestion,
         })
@@ -808,12 +812,7 @@ impl McpServerElicitationOverlay {
         ComposerDraft {
             text: self.composer.current_text(),
             text_elements: self.composer.text_elements(),
-            local_image_paths: self
-                .composer
-                .local_images()
-                .into_iter()
-                .map(|img| img.path)
-                .collect(),
+            local_image_paths: self.composer.local_image_paths(),
             pending_pastes: self.composer.pending_pastes(),
         }
     }
@@ -1151,7 +1150,11 @@ impl McpServerElicitationOverlay {
             self.request.request_id.clone(),
             McpServerElicitationAction::Cancel,
             /*content*/ None,
-            /*meta*/ None,
+            self.request.is_tool_approval.then(|| {
+                serde_json::json!({
+                    CANCELLATION_REASON_KEY: McpApprovalCancellationReason::User,
+                })
+            }),
         );
     }
 
@@ -1190,7 +1193,14 @@ impl McpServerElicitationOverlay {
                         })),
                     ),
                     Some(APPROVAL_DECLINE_VALUE) => (McpServerElicitationAction::Decline, None),
-                    Some(APPROVAL_CANCEL_VALUE) => (McpServerElicitationAction::Cancel, None),
+                    Some(APPROVAL_CANCEL_VALUE) => (
+                        McpServerElicitationAction::Cancel,
+                        self.request.is_tool_approval.then(|| {
+                            serde_json::json!({
+                                CANCELLATION_REASON_KEY: McpApprovalCancellationReason::User,
+                            })
+                        }),
+                    ),
                     _ => (McpServerElicitationAction::Cancel, None),
                 };
             self.app_event_tx.resolve_elicitation(
@@ -1252,12 +1262,7 @@ impl McpServerElicitationOverlay {
     }
 
     fn apply_submission_to_draft(&mut self, text: String, text_elements: Vec<TextElement>) {
-        let local_image_paths = self
-            .composer
-            .local_images()
-            .into_iter()
-            .map(|img| img.path)
-            .collect::<Vec<_>>();
+        let local_image_paths = self.composer.local_image_paths();
         if let Some(answer) = self.current_answer_mut() {
             answer.draft = ComposerDraft {
                 text: text.clone(),
@@ -1875,6 +1880,7 @@ mod tests {
                 message: "Allow this request?".to_string(),
                 approval_display_params: Vec::new(),
                 response_mode: McpServerElicitationResponseMode::FormContent,
+                is_tool_approval: false,
                 fields: vec![McpServerElicitationField {
                     id: "confirmed".to_string(),
                     label: "Confirm".to_string(),
@@ -1945,6 +1951,7 @@ mod tests {
                 message: "Allow this request?".to_string(),
                 approval_display_params: Vec::new(),
                 response_mode: McpServerElicitationResponseMode::ApprovalAction,
+                is_tool_approval: false,
                 fields: vec![McpServerElicitationField {
                     id: APPROVAL_FIELD_ID.to_string(),
                     label: String::new(),
@@ -2002,6 +2009,7 @@ mod tests {
                 message: "Allow this request?".to_string(),
                 approval_display_params: Vec::new(),
                 response_mode: McpServerElicitationResponseMode::ApprovalAction,
+                is_tool_approval: true,
                 fields: vec![McpServerElicitationField {
                     id: APPROVAL_FIELD_ID.to_string(),
                     label: String::new(),

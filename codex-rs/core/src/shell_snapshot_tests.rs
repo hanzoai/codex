@@ -376,6 +376,7 @@ async fn inactive_profiles_keep_snapshots_but_active_brokers_require_sandbox() -
         /*prefer_executor_snapshots*/ false,
     );
     let mut config = EnvironmentConfig {
+        environment_hooks: Default::default(),
         allow_login_shell: false,
         workspace_roots: Vec::new(),
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
@@ -448,6 +449,7 @@ async fn inactive_profiles_keep_snapshots_but_active_brokers_require_sandbox() -
                 updated.clone(),
                 /*non_blocking_snapshots*/ false,
             );
+            child.activate_configured(async_channel::unbounded().0);
             let child = child.snapshot().await;
             assert!(!Arc::ptr_eq(
                 &updated.primary().expect("parent turn").shell_snapshot_cache,

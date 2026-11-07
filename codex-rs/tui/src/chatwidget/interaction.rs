@@ -2,6 +2,7 @@
 
 use super::clipboard::PendingCopy;
 use super::*;
+use crate::activation_key_guard::ActivationKeySuppression;
 use crate::bottom_pane::BottomPaneView;
 use crate::clipboard_copy::CopyStatus;
 use crate::clipboard_copy::worker::CopyResult;
@@ -15,6 +16,11 @@ pub(crate) enum KeyEventAction {
 }
 
 impl ChatWidget {
+    pub(crate) fn current_patch_approval(&self) -> Option<(ThreadId, &str)> {
+        let patch = self.bottom_pane.current_patch_approval()?;
+        Some((patch.thread_id, &patch.id))
+    }
+
     pub(crate) fn clear_composer_selection(&mut self) {
         self.bottom_pane.clear_composer_selection();
     }
@@ -45,6 +51,10 @@ impl ChatWidget {
             .copy_composer_selection_on_release(event, selection_copy, copy)
     }
 
+    pub(crate) fn set_composer_cursor(&mut self, cursor: usize) {
+        self.bottom_pane.set_composer_cursor(cursor);
+    }
+
     pub(crate) fn handle_composer_mouse(&mut self, event: crossterm::event::MouseEvent) -> bool {
         self.bottom_pane.handle_composer_mouse(event)
     }
@@ -65,20 +75,31 @@ impl ChatWidget {
         self.bottom_pane.prepare_composer_mouse(event)
     }
 
-    pub(crate) fn set_agents_navigation_enabled(&mut self, enabled: bool) {
-        self.bottom_pane.set_agents_navigation_enabled(enabled);
-    }
-
     pub(crate) fn agents_navigation_key_available(&self) -> bool {
         self.bottom_pane.agents_navigation_key_available()
     }
 
     pub(crate) fn keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
-        self.bottom_pane.keymap_contexts()
+        let contexts = self.bottom_pane.keymap_contexts();
+        if self.visible_new_backend_control().is_some() {
+            contexts.with_backend_cycling()
+        } else {
+            contexts
+        }
     }
 
     pub(crate) fn take_key_chord_reset(&mut self) -> bool {
         std::mem::take(&mut self.bottom_pane.key_chord_reset_requested)
+    }
+
+    pub(crate) fn suppress_current_view_key_until_release(
+        &mut self,
+        key: KeyBinding,
+        activated_at: Instant,
+        suppression: ActivationKeySuppression,
+    ) {
+        self.bottom_pane
+            .suppress_current_view_key_until_release(key, activated_at, suppression);
     }
 
     pub(crate) fn consume_view_transition_key_event(&mut self, key_event: KeyEvent) -> bool {
@@ -91,11 +112,43 @@ impl ChatWidget {
         self.handle_key_event_with_activation_key(key_event, /*activation_key*/ None)
     }
 
+    pub(crate) fn set_new_backend_control(&mut self, label: Option<String>) {
+        if self.new_backend_label != label {
+            self.new_backend_label = label;
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn can_choose_new_backend(&self) -> bool {
+        !self.blocks_direct_input
+            && !self.is_user_turn_pending_or_running()
+            && self.last_turn_id().is_none()
+            && !self.input_queue.has_queued_follow_up_messages()
+            && self.input_queue.startup_submission.is_none()
+            && self.initial_user_message.is_none()
+    }
+
+    pub(super) fn visible_new_backend_control(&self) -> Option<&str> {
+        let label = self.new_backend_label.as_deref()?;
+        (self.can_choose_new_backend()
+            && self.bottom_pane.no_modal_or_popup_active()
+            && !self.fork_in_progress
+            && !self.shortcut_overlay_visible()
+            && !self.quick_dial_menu
+            && self.safety_recourse.is_none()
+            && !self.has_provider_error()
+            && matches!(self.external_editor_state, ExternalEditorState::Closed))
+        .then_some(label)
+    }
+
     pub(crate) fn handle_key_event_with_activation_key(
         &mut self,
         key_event: KeyEvent,
         activation_key: Option<crate::key_hint::KeyBinding>,
     ) -> KeyEventAction {
+        if self.handle_quick_dial_menu(key_event) {
+            return KeyEventAction::None;
+        }
         if self.handle_startup_submission_key(key_event) {
             return KeyEventAction::None;
         }
@@ -110,7 +163,7 @@ impl ChatWidget {
                     modifiers,
                     kind: KeyEventKind::Press,
                     ..
-                } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'c')
+                } if modifiers == KeyModifiers::CONTROL && c.eq_ignore_ascii_case(&'c')
             )
             && (self.bottom_pane.warnings_active()
                 || (!key_hint::ctrl(KeyCode::Char('r')).is_press(key_event)
@@ -130,9 +183,26 @@ impl ChatWidget {
             return KeyEventAction::None;
         }
 
+        let keymap = self.bottom_pane.keymap();
+        if keymap.app.change_host.is_pressed(key_event)
+            && self.visible_new_backend_control().is_some()
+        {
+            self.app_event_tx
+                .send(AppEvent::CycleNewConversationBackend);
+            return KeyEventAction::None;
+        }
+
         if self.shortcut_overlay_visible() && key_hint::plain(KeyCode::Esc).is_press(key_event) {
             self.bottom_pane
                 .handle_key_event_with_activation_key(key_event, activation_key);
+            return KeyEventAction::None;
+        }
+
+        if key_event.kind == KeyEventKind::Press
+            && self.chat_keymap.open_presets.is_pressed(key_event)
+            && self.bottom_pane.no_modal_or_popup_active()
+        {
+            self.open_quick_dial_menu();
             return KeyEventAction::None;
         }
 
@@ -193,39 +263,16 @@ impl ChatWidget {
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
             }
-            key if key.kind == KeyEventKind::Press
-                && ((matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'v'))
-                    && key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT))
-                    || (cfg!(windows) && key_hint::shift(KeyCode::Insert).is_press(key))) =>
-            {
-                if Instant::now() < self.suppress_image_paste_until {
-                    self.suppress_image_paste_until =
-                        Instant::now() + clipboard::IMAGE_PASTE_REPEAT_WINDOW;
-                    return KeyEventAction::None;
+            _ => {
+                if let Some(action) = self.image_paste_key_action(key_event) {
+                    return action;
                 }
-                self.suppress_image_paste_until =
-                    Instant::now() + clipboard::IMAGE_PASTE_REPEAT_WINDOW;
-                let text_fallback = (cfg!(windows)
-                    && (key.modifiers == KeyModifiers::CONTROL
-                        || key_hint::shift(KeyCode::Insert).is_press(key)))
-                .then_some(key.code);
-                if text_fallback.is_some() {
-                    self.bottom_pane.prepare_composer_clipboard_paste();
+                if key_event.kind == KeyEventKind::Press {
+                    self.bottom_pane.clear_quit_shortcut_hint();
+                    self.quit_shortcut_expires_at = None;
+                    self.quit_shortcut_key = None;
                 }
-                return KeyEventAction::PasteImage { text_fallback };
             }
-            other if other.kind == KeyEventKind::Press => {
-                self.suppress_image_paste_until = Instant::now();
-                self.bottom_pane.clear_quit_shortcut_hint();
-                self.quit_shortcut_expires_at = None;
-                self.quit_shortcut_key = None;
-            }
-            other if other.kind == KeyEventKind::Release => {
-                self.suppress_image_paste_until = Instant::now();
-            }
-            _ => {}
         }
 
         if key_event.kind == KeyEventKind::Press
@@ -353,12 +400,17 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
+        self.quick_dial_menu = false;
         if items.is_some() {
             // Active input instructions supersede transient feedback from a previous action.
             self.bottom_pane
                 .show_footer_flash(Line::default(), Duration::ZERO);
         }
         self.bottom_pane.set_footer_hint_override(items);
+    }
+
+    pub(crate) fn dismiss_provider_view(&mut self, id: &'static str) {
+        self.bottom_pane.dismiss_view_by_id(id);
     }
 
     pub(crate) fn show_selection_view(&mut self, params: SelectionViewParams) {
@@ -402,6 +454,10 @@ impl ChatWidget {
 
     pub(crate) fn no_modal_or_popup_active(&self) -> bool {
         self.bottom_pane.no_modal_or_popup_active()
+    }
+
+    pub(crate) fn completion_can_yield_focus(&self) -> bool {
+        self.bottom_pane.completion_can_yield_focus()
     }
 
     pub(crate) fn can_launch_external_editor(&self) -> bool {
@@ -529,7 +585,10 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
-        if self.external_writer_view && !self.bottom_pane.has_active_view() {
+        self.cancel_quick_dial_menu();
+        if (self.external_writer_view || self.has_provider_error())
+            && !self.bottom_pane.has_active_view()
+        {
             return;
         }
         if !self.startup_submission_has_protected_input() {
@@ -545,7 +604,12 @@ impl ChatWidget {
 
     // Returns true if caller should skip rendering this frame (a future frame is scheduled).
     pub(crate) fn handle_paste_burst_tick(&mut self, frame_requester: FrameRequester) -> bool {
-        if self.bottom_pane.flush_paste_burst_if_due() {
+        let flushed = self.bottom_pane.flush_paste_burst_if_due();
+        self.finish_paste_burst_tick(frame_requester, flushed)
+    }
+
+    fn finish_paste_burst_tick(&mut self, frame_requester: FrameRequester, flushed: bool) -> bool {
+        if flushed {
             self.refresh_startup_recovery();
             // A paste just flushed; request an immediate redraw and skip this frame.
             self.request_redraw();

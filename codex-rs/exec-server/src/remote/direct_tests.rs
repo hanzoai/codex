@@ -39,11 +39,12 @@ use crate::RemoteEnvironmentTransport;
 struct StaticAuthProvider;
 
 impl AuthProvider for StaticAuthProvider {
-    fn add_auth_headers(&self, headers: &mut HeaderMap) {
+    fn add_auth_headers(&self, headers: &mut HeaderMap) -> Result<(), codex_api::AuthError> {
         headers.insert(
             http::header::AUTHORIZATION,
             HeaderValue::from_static("AWS4-HMAC-SHA256 test-signature"),
         );
+        Ok(())
     }
 
     fn apply_auth(
@@ -56,7 +57,7 @@ impl AuthProvider for StaticAuthProvider {
                 assert!(request.headers.contains_key(http::header::HOST));
                 assert!(request.url.starts_with("http"));
             }
-            self.add_auth_headers(&mut request.headers);
+            self.add_auth_headers(&mut request.headers)?;
             Ok(request)
         })
     }
@@ -159,7 +160,9 @@ async fn direct_environment_accepts_large_file_writes() -> Result<()> {
 }
 
 impl AuthProvider for QueryAuthProvider {
-    fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+    fn add_auth_headers(&self, _headers: &mut HeaderMap) -> Result<(), codex_api::AuthError> {
+        Ok(())
+    }
 
     fn apply_auth(
         &self,
@@ -173,6 +176,58 @@ impl AuthProvider for QueryAuthProvider {
             Ok(request)
         })
     }
+}
+
+struct ScopedExecutorAuth;
+
+impl AuthProvider for ScopedExecutorAuth {
+    fn add_auth_headers(&self, headers: &mut HeaderMap) -> Result<(), codex_api::AuthError> {
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer synthetic-scoped-token"),
+        );
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn direct_transport_rejects_scoped_credentials_before_sending() -> Result<()> {
+    let registry = MockServer::start().await;
+    let mut client = EnvironmentRegistryClient::new(registry.uri(), Arc::new(ScopedExecutorAuth))?;
+    client.auth_mode = RegistryAuthMode::ExecutorCredential;
+    let error = client
+        .register_direct_environment("environment-requested")
+        .await
+        .expect_err("scoped credentials must not be sent on direct registration");
+    assert!(matches!(
+        error,
+        ExecServerError::EnvironmentRegistryConfig(_)
+    ));
+    assert!(registry.received_requests().await.unwrap().is_empty());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("ws://{}/connect", listener.local_addr()?);
+    let error = match connect_direct(
+        &url,
+        &ScopedExecutorAuth,
+        RegistryAuthMode::ExecutorCredential,
+        &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+    )
+    .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("scoped credentials must not be sent to the WebSocket"),
+    };
+    assert!(matches!(
+        error,
+        ExecServerError::EnvironmentRegistryConfig(_)
+    ));
+    assert!(
+        timeout(Duration::from_millis(50), listener.accept())
+            .await
+            .is_err()
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -213,6 +268,7 @@ async fn direct_websocket_uses_authenticated_url_query_parameters() -> Result<()
     let connection = connect_direct(
         &url,
         &QueryAuthProvider,
+        RegistryAuthMode::Legacy,
         &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
     )
     .await?;

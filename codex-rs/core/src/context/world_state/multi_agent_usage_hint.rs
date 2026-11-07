@@ -38,14 +38,15 @@ impl WorldStateSection for MultiAgentUsageHintState {
     type Snapshot = WorldStateHash;
 
     fn matches_current_legacy_fragment(&self, role: &str, text: &str) -> bool {
-        role == self.instructions.role() && text == self.instructions.render()
+        role == self.instructions.role()
+            && text == self.instructions.render().into_text().unwrap_or_default()
     }
 
     fn render_diff(
         &self,
         previous: PreviousSectionState<'_, Self::Snapshot>,
     ) -> SectionTransition<Self::Snapshot> {
-        let fragment: Option<Box<dyn ContextualUserFragment>> = match previous {
+        let fragment: Option<super::WorldStateFragment> = match previous {
             PreviousSectionState::Known(previous) if previous == &self.fingerprint => {
                 return (None, Vec::new());
             }
@@ -53,8 +54,10 @@ impl WorldStateSection for MultiAgentUsageHintState {
             PreviousSectionState::Known(_) | PreviousSectionState::Absent => {
                 if self.instructions.markers().0.is_empty() {
                     Some(Box::new(
-                        MultiAgentUsageHint::new(&self.instructions.body())
-                            .with_metadata(ContentItemMetadata::tool(self.namespace.clone())),
+                        MultiAgentUsageHint::new(
+                            &self.instructions.body().into_text().unwrap_or_default(),
+                        )
+                        .with_metadata(ContentItemMetadata::tool(self.namespace.clone())),
                     ))
                 } else {
                     Some(Box::new(self.instructions.clone().with_metadata(

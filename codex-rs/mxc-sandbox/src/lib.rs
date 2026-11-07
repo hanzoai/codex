@@ -2,6 +2,8 @@
 //! a usable process security environment and never enters MXC's ACL fallbacks.
 
 #[cfg(windows)]
+mod availability;
+#[cfg(windows)]
 mod native;
 #[cfg(any(windows, test))]
 mod policy;
@@ -97,16 +99,13 @@ pub fn create_command_args(args: CreateMxcCommandArgsParams<'_>) -> Result<Vec<S
 pub fn is_available() -> bool {
     #[cfg(windows)]
     {
-        appcontainer_common::base_container_runner::BaseContainerRunner::is_process_security_environment_usable()
+        availability::is_available()
     }
     #[cfg(not(windows))]
     {
         false
     }
 }
-
-#[cfg(windows)]
-pub use codex_windows_sandbox::GLOB_SCAN_PROGRAM;
 
 /// Resolve configured symbols and snapshot deny globs for policy inspection.
 /// Reuses MXC's resolution without adding native grants or protections.
@@ -124,22 +123,23 @@ pub fn prepare_file_system_policy(
         .map(|(key, value)| format!("{key}={value}"))
         .collect::<Vec<_>>();
     let mut policy = policy::materialize_temporary_paths(policy, &env_entries)?;
-    let denied = codex_windows_sandbox::resolve_windows_deny_read_paths_in_environment(
-        &policy,
-        policy_cwd,
-        env,
-        command_cwd,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let denied = codex_windows_sandbox::resolve_windows_deny_read_paths(&policy, policy_cwd)
+        .map_err(anyhow::Error::msg)?;
     policy = policy.with_expanded_deny_globs(denied);
     if policy.has_full_disk_write_access() {
         return Ok(policy);
     }
-    let volumes = windows::volume_roots(policy_cwd.as_path(), command_cwd)?
+    let volumes = windows::volume_roots(policy_cwd.as_path(), command_cwd)?;
+    let read_volumes = windows::implicit_read_roots(&volumes, policy_cwd.as_path(), command_cwd)?;
+    let volumes = volumes
         .into_iter()
         .map(PathUri::from_host_native_path)
         .collect::<std::io::Result<Vec<_>>>()?;
-    Ok(policy::materialize_volume_roots(policy, &volumes)?)
+    Ok(policy::materialize_volume_roots(
+        policy,
+        &volumes,
+        &read_volumes,
+    )?)
 }
 
 /// Entry point dispatched before ordinary Codex CLI parsing.

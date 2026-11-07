@@ -1,12 +1,16 @@
 //! Exercises classifier fallback, cooldown, and cancellation against local servers.
 
+use super::super::ConversationSample;
 use super::super::LunaSampler;
 use super::super::tests::ProxyPrewarmLimit;
 use super::super::tests::proxy_websocket_servers_with_http;
 use super::super::tests::sample_request;
 use super::super::tests::sampler_config;
 use super::*;
+use crate::async_scorer::request::PreparedRequest;
 use anyhow::Result;
+use codex_guardian_context::TranscriptCursor;
+use codex_history::ResponseItemEnvelope;
 use codex_login::AuthManager;
 use codex_login::WorkspaceRouting;
 use codex_login::WorkspaceRoutingRequest;
@@ -404,7 +408,7 @@ async fn stalled_http_headers_exhaust_the_sampling_retry_budget() -> Result<()> 
 }
 
 #[tokio::test]
-async fn supersession_closes_http_before_headers_and_while_draining_the_body() -> Result<()> {
+async fn cancellation_closes_http_before_headers_and_while_draining_the_body() -> Result<()> {
     skip_if_no_network!(Ok(()));
     // The second case publishes a score, then leaves the response body open forever.
     for response in [
@@ -446,37 +450,53 @@ async fn supersession_closes_http_before_headers_and_while_draining_the_body() -
             }
             Ok::<_, std::io::Error>(())
         });
-        let mut samples = tokio::task::JoinSet::new();
+        let mut request = sample_request("first");
+        let evidence = std::mem::take(&mut request.input)
+            .into_iter()
+            .map(ResponseItemEnvelope::new)
+            .collect();
+        let (input, input_tokens) =
+            LunaSampler::prepare_input(&request, /*history*/ None, evidence);
+        let sample = ConversationSample {
+            input: PreparedRequest {
+                input,
+                input_tokens,
+                existing_context_tokens: 0,
+                cursor: TranscriptCursor {
+                    parent_history_version: 0,
+                    transcript_entry_count: 1,
+                },
+                truncations: Vec::new(),
+                section_costs: Vec::new(),
+            },
+            sampling: request,
+        };
+        let (ready, score) = tokio::sync::oneshot::channel();
         let first = Arc::clone(&sampler);
-        samples.spawn(async move { first.sample(sample_request("first")).await });
+        let pending = tokio::spawn(async move { first.sample_retained(sample, ready).await });
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(5), requests.recv()).await?,
             Some(1)
         );
         if has_score {
             assert_eq!(
-                tokio::time::timeout(Duration::from_secs(5), samples.join_next())
-                    .await?
-                    .unwrap()??,
+                tokio::time::timeout(Duration::from_secs(5), score)
+                    .await???
+                    .accept(),
                 "low",
             );
             assert!(disconnects.try_recv().is_err());
         }
-        for _ in 0..MAX_CONCURRENT_REQUESTS {
-            let sampler = Arc::clone(&sampler);
-            samples.spawn(async move { sampler.sample(sample_request("newer")).await });
-        }
-        if !has_score {
-            assert!(matches!(
-                tokio::time::timeout(Duration::from_secs(5), samples.join_next())
-                    .await?
-                    .unwrap()?,
-                Err(LunaSamplerError::Superseded)
-            ));
-        }
+        // Conversation expiry cancels the retained future, including its unfinished drain.
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(5), disconnects.recv()).await?,
             Some(1)
+        );
+        assert_eq!(
+            sampler.connections.classifications.available_permits(),
+            MAX_CONCURRENT_REQUESTS
         );
     }
     Ok(())
@@ -491,6 +511,71 @@ impl WorkspaceRoutingResolver for RoutingPolicy {
     ) -> ModelProviderFuture<'_, std::io::Result<Option<WorkspaceRouting>>> {
         Box::pin(async { Ok(self.0.lock().unwrap().clone()) })
     }
+}
+
+#[tokio::test]
+async fn sampling_uses_new_credentials_after_logout_and_login() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let home = tempfile::tempdir()?;
+    let auth = AuthManager::from_auth_for_testing_with_home(
+        CodexAuth::from_api_key("initial-key"),
+        home.path().to_path_buf(),
+    );
+    let server = responses::start_mock_server().await;
+    let requests = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse(vec![
+                responses::ev_output_text_delta("low"),
+                responses::ev_completed("before-logout"),
+            ]),
+            responses::sse(vec![
+                responses::ev_output_text_delta("low"),
+                responses::ev_completed("after-login"),
+            ]),
+        ],
+    )
+    .await;
+    let mut config = sampler_config(format!("{}/v1", server.uri()));
+    config.provider = create_model_provider(config.provider.info().clone(), Some(auth.clone()));
+    let sampler = LunaSampler::new(config);
+    // Keep both requests on HTTP without starting background WebSocket opens.
+    *sampler.connections.retry_after.lock().unwrap() = Some(Instant::now() + CONNECT_COOLDOWN);
+    assert_eq!(
+        sampler
+            .sample(sample_request("before-logout"))
+            .await
+            .expect("sample before logout"),
+        "low"
+    );
+
+    auth.logout().await?;
+    codex_login::login_with_api_key(
+        home.path(),
+        "replacement-key",
+        codex_login::AuthCredentialsStoreMode::File,
+        codex_login::AuthKeyringBackendKind::default(),
+    )?;
+    auth.reload().await;
+
+    assert_eq!(
+        sampler
+            .sample(sample_request("after-login"))
+            .await
+            .expect("sample after signing in again"),
+        "low"
+    );
+    let requests = requests.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].header("authorization").as_deref(),
+        Some("Bearer initial-key")
+    );
+    assert_eq!(
+        requests[1].header("authorization").as_deref(),
+        Some("Bearer replacement-key")
+    );
+    Ok(())
 }
 
 #[tokio::test]

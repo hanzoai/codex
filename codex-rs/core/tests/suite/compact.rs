@@ -33,7 +33,6 @@ use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadSettingsOverrides;
-use codex_protocol::protocol::WarningEvent;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_protocol::user_input::UserInput;
@@ -101,8 +100,6 @@ const GLOBAL_AGENTS_OVERRIDE_FILENAME: &str = "AGENTS.override.md";
 const NEW_GLOBAL_INSTRUCTIONS: &str = "new global instructions";
 const OLD_GLOBAL_INSTRUCTIONS: &str = "old global instructions";
 const REMOTE_V2_SUMMARY: &str = "global-instructions-remote-v2-summary";
-
-pub(super) const COMPACT_WARNING_MESSAGE: &str = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.";
 
 fn ev_exec_command_call(call_id: &str, command: &str) -> serde_json::Value {
     ev_function_call(
@@ -593,11 +590,6 @@ async fn summarize_context_three_requests_and_instructions(
 
     // 2) Summarize – second hit should include the summarization prompt.
     codex.submit(Op::Compact).await?;
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     // 3) Next user input – third hit; history should include only the summary.
@@ -841,7 +833,6 @@ async fn manual_pre_compact_block_decision_does_not_block_compaction() {
     })
     .await;
     assert_eq!(completed.run.status, HookRunStatus::Failed);
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
@@ -897,7 +888,6 @@ async fn compact_hooks_respect_matchers_and_post_runs_after_compaction() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.expect("trigger compact");
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     assert_eq!(request_log.requests().len(), 2);
@@ -961,11 +951,6 @@ async fn manual_compact_uses_custom_prompt() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.expect("trigger compact");
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
@@ -4427,11 +4412,6 @@ async fn manual_compact_retries_after_context_window_error() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.unwrap();
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact retry");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
@@ -4615,6 +4595,16 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
         .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
+    let mail = json!({
+        "type": "agent_message", "id": "agent_pending-result",
+        "author": "/root/worker", "recipient": "/root",
+        "content": [{"type": "input_text", "text": "Message Type: FINAL_ANSWER\nThe worker found a release blocker."}],
+    });
+    codex
+        .inject_response_items(vec![serde_json::from_value(mail.clone()).unwrap()])
+        .await
+        .unwrap();
+
     codex.submit(Op::Compact).await.unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
@@ -4640,6 +4630,11 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = responses_mock.requests();
+    assert_eq!(
+        responses::strip_metadata_from_json(json!(requests[2].inputs_of_type("agent_message"))),
+        json!([mail]),
+    );
+    assert!(requests[4].inputs_of_type("agent_message").is_empty());
     assert_eq!(
         requests.len(),
         5,
@@ -5500,17 +5495,21 @@ async fn auto_compact_body_after_prefix_still_caps_at_context_window() {
     );
 }
 
-#[test_case::test_case(false; "counts_encrypted_reasoning_before_last_user")]
-#[test_case::test_case(true; "compacts_after_reasoning_header_clears")]
+#[derive(Clone, Copy)]
+enum ContinueThread {
+    Live,
+    Fork,
+    Restart,
+}
+
+#[test_case::test_case(ContinueThread::Live; "live")]
+#[test_case::test_case(ContinueThread::Fork; "fork")]
+#[test_case::test_case(ContinueThread::Restart; "cold resume")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_compact_accounts_for_encrypted_reasoning(first_response_includes_reasoning: bool) {
+async fn auto_compact_accounts_for_encrypted_reasoning(continuation: ContinueThread) {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
-
-    let first_user = "COUNT_PRE_LAST_REASONING";
-    let second_user = "TRIGGER_COMPACT_AT_LIMIT";
-    let third_user = "AFTER_REMOTE_COMPACT";
 
     let pre_last_reasoning_content = "a".repeat(2_400);
     let post_last_reasoning_content = "b".repeat(4_000);
@@ -5523,84 +5522,157 @@ async fn auto_compact_accounts_for_encrypted_reasoning(first_response_includes_r
         ev_reasoning_item("post-reasoning", &["post"], &[&post_last_reasoning_content]),
         ev_completed_with_tokens("r2", /*total_tokens*/ 80),
     ]);
-    let compact_turn = remote_v2_compaction_response();
     let third_turn = sse(vec![
+        ev_assistant_message("m3", THIRD_USER_MSG),
+        ev_completed_with_tokens("r3", /*total_tokens*/ 81),
+    ]);
+    let compact_turn = remote_v2_compaction_response();
+    let fourth_turn = sse(vec![
         ev_assistant_message("m4", FINAL_REPLY),
         ev_completed_with_tokens("r4", /*total_tokens*/ 1),
     ]);
 
-    let request_log = mount_response_sequence(
+    let request_log = mount_sse_sequence(
         &server,
         vec![
-            // Turn 1: reasoning before last user (should count).
-            if first_response_includes_reasoning {
-                sse_response(first_turn).insert_header("X-Reasoning-Included", "true")
-            } else {
-                sse_response(first_turn)
-            },
-            // Turn 2: reasoning after last user should be ignored; no header is returned.
-            sse_response(second_turn),
-            // Turn 3: compact the prior conversation before sampling.
-            sse_response(compact_turn),
-            // Turn 3: next user turn after remote compaction.
-            sse_response(third_turn),
+            first_turn,
+            second_turn,
+            third_turn,
+            compact_turn,
+            fourth_turn,
         ],
     )
     .await;
 
-    let codex = test_codex()
-        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
-        .with_config(|config| {
-            set_test_compact_prompt(config);
-            config.model_auto_compact_token_limit = Some(300);
-        })
-        .build(&server)
+    let builder = || {
+        test_codex()
+            .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+            .with_model_info_override("gpt-5.5", |model| {
+                model.use_responses_lite = true;
+            })
+            .with_config(|config| {
+                config.model = Some("gpt-5.5".to_string());
+                set_test_compact_prompt(config);
+                config.model_auto_compact_token_limit = Some(81);
+            })
+    };
+    let mut test = builder()
+        .build_with_auto_env(&server)
         .await
-        .expect("build codex")
-        .codex;
+        .expect("build codex");
 
-    for (idx, user) in [first_user, second_user, third_user]
-        .into_iter()
-        .enumerate()
-    {
-        codex
-            .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-                text: user.into(),
-                text_elements: Vec::new(),
-            }]))
-            .await
-            .expect("start user turn");
-        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    for user in ["FIRST_REASONING", "SECOND_REASONING"] {
+        test.submit_text_turn(user).await.expect("submit user turn");
+    }
 
-        if idx < 2 {
-            assert!(
-                request_log
-                    .requests()
-                    .iter()
-                    .all(|request| request.inputs_of_type("compaction_trigger").is_empty()),
-                "remote compaction should not run before the next user turn"
-            );
+    match continuation {
+        ContinueThread::Live => {}
+        ContinueThread::Restart => {
+            test = builder()
+                .restart_with_auto_env(&server, &test)
+                .await
+                .expect("restart");
+        }
+        ContinueThread::Fork => {
+            let path = test
+                .session_configured
+                .rollout_path
+                .clone()
+                .expect("rollout path");
+            let options = test.start_thread_options().await;
+            test.codex.shutdown_and_wait().await.expect("flush rollout");
+            test.codex = test
+                .thread_manager
+                .fork_legacy_thread(usize::MAX, options, path)
+                .await
+                .expect("fork")
+                .thread;
         }
     }
 
+    for user in ["BELOW_COMPACT_LIMIT", "AT_COMPACT_LIMIT"] {
+        test.submit_text_turn(user).await.expect("submit user turn");
+    }
+
     let requests = request_log.requests();
+    // Responses Lite includes retained reasoning in its usage without a header.
+    // 80 must remain below the limit; 81 must trigger compaction before turn 4.
     assert_eq!(
-        requests.len(),
-        4,
-        "conversation should include three user turns and remote compaction"
+        requests
+            .iter()
+            .map(|request| request.inputs_of_type("compaction_trigger").len())
+            .collect::<Vec<_>>(),
+        vec![0, 0, 0, 1, 0],
     );
-    assert_eq!(requests[2].path(), "/v1/responses");
-    assert_eq!(requests[2].inputs_of_type("compaction_trigger").len(), 1);
-    assert!(requests[3].inputs_of_type("compaction_trigger").is_empty());
-    let second_request_body = requests[1].body_json().to_string();
-    assert!(
-        !second_request_body.contains(REMOTE_V2_SUMMARY),
-        "second turn should not include compacted history"
-    );
-    let third_request_body = requests[3].body_json().to_string();
-    assert!(
-        third_request_body.contains(REMOTE_V2_SUMMARY),
-        "third turn should include compaction summary item"
+}
+
+#[test_case::test_case("response.incomplete", true, true; "incomplete_with_usage")]
+#[test_case::test_case("response.incomplete", false, true; "incomplete_without_usage")]
+#[test_case::test_case("response.completed", false, true; "completed_without_usage")]
+#[test_case::test_case("response.incomplete", false, false; "non_lite_incomplete_without_usage")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_compact_accounts_for_unreported_reasoning(
+    event_type: &str,
+    with_usage: bool,
+    use_responses_lite: bool,
+) {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+    let mut responses = vec![sse(vec![
+        ev_assistant_message("initial", "Initial reply."),
+        ev_completed_with_tokens("initial", /*total_tokens*/ 80),
+    ])];
+    for id in ["partial-1", "partial-2"] {
+        let usage = with_usage.then(|| {
+            ev_completed_with_tokens(id, /*total_tokens*/ 15)["response"]["usage"].clone()
+        });
+        responses.push(sse(vec![
+            ev_reasoning_item(id, &["partial"], &[&"r".repeat(12_000)]),
+            json!({
+                "type": event_type,
+                "response": {
+                    "id": id,
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                    "usage": usage
+                }
+            }),
+        ]));
+    }
+    responses.push(remote_v2_compaction_response());
+    responses.push(sse(vec![
+        ev_assistant_message("final", FINAL_REPLY),
+        ev_completed_with_tokens("final", /*total_tokens*/ 1),
+    ]));
+    let request_log = mount_sse_sequence(&server, responses).await;
+    let test = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_model_info_override("gpt-5.5", move |model| {
+            model.use_responses_lite = use_responses_lite;
+        })
+        .with_config(|config| {
+            set_test_compact_prompt(config);
+            config.model_auto_compact_token_limit = Some(5_000);
+            config.model_provider.stream_max_retries = Some(0);
+        })
+        .build_with_auto_env(&server)
+        .await
+        .expect("build codex");
+
+    for user in ["INITIAL", "PARTIAL_ONE", "PARTIAL_TWO", "CONTINUE"] {
+        test.submit_text_turn(user).await.expect("submit user turn");
+    }
+
+    // The saved count is 80. Each partial response retains about 3,000 tokens:
+    // one stays below the 5,000-token limit, but two must compact before CONTINUE.
+    assert_eq!(
+        request_log
+            .requests()
+            .iter()
+            .map(|request| request.inputs_of_type("compaction_trigger").len())
+            .collect::<Vec<_>>(),
+        vec![0, 0, 0, 1, 0],
+        "retained reasoning must trigger compaction before the continuation request",
     );
 }
 
@@ -6227,7 +6299,7 @@ async fn remote_v2_compaction_refreshes_instructions_and_preserves_them_on_cold_
     assert_single_instruction_fragment(&requests[3], &new_fragment);
     let resumed_input = requests[3].input();
     assert_eq!(
-        resumed_input.get(2..=replacement_history.len() + 1),
+        resumed_input.get(..replacement_history.len()),
         Some(replacement_history.as_slice()),
         "remote-v2 cold resume should replay persisted replacement history verbatim"
     );

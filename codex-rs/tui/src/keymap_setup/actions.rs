@@ -35,11 +35,15 @@ pub(super) struct KeymapActionDescriptor {
 #[derive(Clone, Copy, Debug)]
 enum KeymapActionFeature {
     FastMode,
+    MultiBackend,
+    Workspace,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct KeymapActionFilter {
     pub(crate) fast_mode_enabled: bool,
+    pub(crate) multi_backend_enabled: bool,
+    pub(crate) workspace_enabled: bool,
 }
 
 impl KeymapActionDescriptor {
@@ -47,6 +51,8 @@ impl KeymapActionDescriptor {
         match self.required_feature {
             None => true,
             Some(KeymapActionFeature::FastMode) => filter.fast_mode_enabled,
+            Some(KeymapActionFeature::MultiBackend) => filter.multi_backend_enabled,
+            Some(KeymapActionFeature::Workspace) => filter.workspace_enabled,
         }
     }
 }
@@ -111,7 +117,21 @@ macro_rules! define_keymap_actions {
 
 define_keymap_actions! {
     global "Global" {
-        open_agents => "Open the shared agent-session overview.",
+        change_host [MultiBackend] => "Change where a new conversation runs.",
+        focus_main_composer [Workspace] => "Focus the main conversation composer.",
+        focus_sidebar_tabs [Workspace] => "Open the sidebar tab chooser.",
+        focus_sidebar_content [Workspace] => "Focus the side conversation, or hide it when already focused.",
+        hide_pane [Workspace] => "Hide the focused sidebar pane.",
+        focus_pane_left [Workspace] => "Focus the parent conversation.",
+        focus_pane_right [Workspace] => "Focus the open side conversation.",
+        minimize_pane_width [Workspace] => "Minimize the focused pane width.",
+        maximize_pane_width [Workspace] => "Maximize the focused pane width.",
+        equalize_pane_widths [Workspace] => "Equalize visible pane widths.",
+        resize_panes [Workspace] => "Enter keyboard resize mode for visible dividers.",
+        move_divider_left [Workspace] => "Move the divider left when the side pane has focus.",
+        move_divider_right [Workspace] => "Move the divider right when the side pane has focus.",
+        toggle_pane_zoom [Workspace] => "Zoom or restore the focused pane.",
+        open_agents => "Open the agent command center.",
         open_transcript => "Open the transcript overlay.",
         find_transcript => "Find text in the full transcript.",
         // Keep the new warnings action out of shared-config writes until older strict readers
@@ -136,6 +156,7 @@ define_keymap_actions! {
         prompt_stack_back => "Move back through questions toward the composer.",
         skip_question => "Skip the focused question.",
         toggle_voice => "Start or stop a voice conversation.",
+        open_presets => "Run or save reusable inputs.",
         toggle_voice_mute => "Mute or unmute the voice microphone.",
     }
     composer "Composer" {
@@ -277,7 +298,7 @@ define_keymap_actions! {
         archive => "Archive the selected task and its child agents.",
         delete => "Permanently delete the selected task and its child agents.",
         hide => "Hide the selected task until explicitly resumed.",
-        toggle_grouping => "Cycle task grouping by project, status, or model.",
+        toggle_grouping => "Cycle task grouping by project, directory, status, or model.",
     }
     approval "Approval" {
         open_fullscreen => "Open approval details fullscreen.",
@@ -297,6 +318,9 @@ define_keymap_actions! {
 /// parsed back into an action name, because underscores and casing are part of
 /// the stable config contract.
 pub(super) fn action_label(action: &str) -> String {
+    if action == "change_host" {
+        return "Change Where to Run".to_string();
+    }
     action
         .split('_')
         .map(|word| {

@@ -93,6 +93,8 @@ fn skills_extensions() -> Arc<ExtensionRegistry<Config>> {
     let mut extensions = ExtensionRegistryBuilder::<Config>::new();
     install(&mut extensions, |config: &Config| SkillsExtensionConfig {
         include_instructions: config.include_skill_instructions,
+        catalog_deltas_enabled: config.features.enabled(Feature::SkillCatalogDeltas),
+        omit_descriptions: false,
         max_context_tokens: config.skill_max_context_tokens,
         bundled_skills_enabled: config.bundled_skills_enabled(),
         cloud_skill_enabled: config.cloud_skill_enabled,
@@ -1596,7 +1598,7 @@ async fn curated_plugin_skills_follow_auth_switch() -> Result<()> {
         let skills_snapshot = test_codex
             .thread_manager
             .skills_service()
-            .snapshot_for_config(&skills_input, /*fs*/ None)
+            .snapshot_for_config(&skills_input, /*repository*/ None)
             .await;
         skills_snapshot
             .outcome()
@@ -1756,10 +1758,103 @@ enabled = true
     Ok(())
 }
 
-#[test_case(true; "enabled app")]
-#[test_case(false; "disabled app")]
+#[test_case(true; "apps enabled")]
+#[test_case(false; "apps disabled without direct MCP fallback")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn curated_agent_plugin_app_routing_reaches_turns(apps_enabled: bool) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let apps_server = AppsTestServer::mount_with_connector_name(&server, "Google Calendar").await?;
+    let mock = mount_plugin_tool_search_turn(&server).await;
+    let codex_home = Arc::new(TempDir::new()?);
+    let plugin_root = codex_home
+        .path()
+        .join("plugins/cache/openai-curated-remote/sample/local");
+    std::fs::create_dir_all(&plugin_root)?;
+    let command_name = format!("test_stdio_server{}", std::env::consts::EXE_SUFFIX);
+    codex_utils_cargo_bin::copy_executable(
+        std::path::Path::new(&stdio_server_bin()?),
+        &plugin_root.join(&command_name),
+    )?;
+    std::fs::write(
+        plugin_root.join("plugin.json"),
+        r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"sample","extensions":{"com.openai":{"apps":"./.app.json"}}}"#,
+    )?;
+    std::fs::write(
+        plugin_root.join(".app.json"),
+        r#"{"apps":{"calendar":{"id":"calendar"}}}"#,
+    )?;
+    let mcp_server = serde_json::json!({
+        "type": "stdio",
+        "command": format!("./{command_name}"),
+    });
+    std::fs::write(
+        plugin_root.join("mcp.json"),
+        serde_json::json!({
+            "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+            "mcpServers": {"calendar": mcp_server, "sample": mcp_server},
+        })
+        .to_string(),
+    )?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            "[features]\nplugins = true\napps = {apps_enabled}\n[plugins.\"{SAMPLE_REMOTE_PLUGIN_CONFIG_NAME}\"]\nenabled = true\n"
+        ),
+    )?;
+    let mut builder = test_codex()
+        .with_home(codex_home)
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_config(move |config| {
+            config
+                .features
+                .set_enabled(Feature::Apps, apps_enabled)
+                .expect("test config should allow feature update");
+            config.chatgpt_base_url = apps_server.chatgpt_base_url;
+        });
+    let test = builder.build_with_remote_and_local_env(&server).await?;
+    assert!(test.config.features.enabled(Feature::Plugins));
+    assert_eq!(test.config.features.enabled(Feature::Apps), apps_enabled);
+    wait_for_mcp_server(&test.codex, "sample").await?;
+
+    test.codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Mention {
+            name: "sample".into(),
+            path: format!("plugin://{SAMPLE_REMOTE_PLUGIN_CONFIG_NAME}"),
+        }]))
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let requests = mock.requests();
+    let (calendar_tool, echo_tool) = searched_plugin_tools(&requests[1]);
+    assert_eq!(calendar_tool.is_some(), apps_enabled);
+    if let Some(calendar_tool) = calendar_tool {
+        assert_plugin_provenance(&calendar_tool);
+    }
+    assert_plugin_provenance(&echo_tool.expect("unrelated MCP tool remains available"));
+    // Disabling Apps must not restore the matching direct MCP connection.
+    assert!(requests[0].tool_by_name("mcp__calendar", "echo").is_none());
+    let mcp_output = requests[1].tool_search_output(PLUGIN_MCP_SEARCH_CALL_ID);
+    assert!(namespace_child_tool(&mcp_output, "mcp__calendar", "echo").is_none());
+    let apps_connected = server
+        .received_requests()
+        .await
+        .expect("recorded app endpoint requests")
+        .iter()
+        .any(|request| request.url.path().trim_end_matches('/') == "/api/codex/ps/mcp");
+    assert_eq!(apps_connected, apps_enabled);
+    Ok(())
+}
+
+#[test_case("[apps.calendar]\nenabled = true", true; "enabled app")]
+#[test_case("[apps.calendar]\nenabled = false", false; "disabled app")]
+#[test_case("[plugins.\"sample@test\".apps.calendar]\nenabled = false", false; "nested disabled app")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_plugin_mentions_use_apps_for_chatgpt_dual_surface_plugins(
+    app_config: &str,
     app_enabled: bool,
 ) -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -1780,10 +1875,7 @@ async fn explicit_plugin_mentions_use_apps_for_chatgpt_dual_surface_plugins(
     write_plugin_app_plugin(codex_home.as_ref());
     let config_path = codex_home.path().join("config.toml");
     let config = std::fs::read_to_string(&config_path)?;
-    std::fs::write(
-        config_path,
-        format!("{config}\n[apps.calendar]\nenabled = {app_enabled}\n"),
-    )?;
+    std::fs::write(config_path, format!("{config}\n{app_config}\n"))?;
 
     let test_codex =
         build_apps_enabled_plugin_test_codex(&server, codex_home, apps_server.chatgpt_base_url)

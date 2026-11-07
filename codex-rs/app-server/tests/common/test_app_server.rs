@@ -250,7 +250,24 @@ impl TestAppServer {
         event_name: &str,
         timeout: Duration,
     ) -> anyhow::Result<serde_json::Value> {
-        self.json_logs.wait_for_event(event_name, timeout).await
+        self.wait_for_matching_json_log_event(
+            &format!("named `{event_name}`"),
+            |event| event["fields"]["event.name"].as_str() == Some(event_name),
+            timeout,
+        )
+        .await
+    }
+
+    /// Waits for a JSON stderr event matching a predicate, including its request span.
+    pub async fn wait_for_matching_json_log_event(
+        &self,
+        description: &str,
+        predicate: impl Fn(&serde_json::Value) -> bool,
+        timeout: Duration,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.json_logs
+            .wait_for_event(description, predicate, timeout)
+            .await
     }
 
     async fn new_with_program_env_and_args(
@@ -1952,7 +1969,8 @@ impl TestAppServerBuilder {
 
     /// Builds a server and completes its standard initialization handshake.
     pub async fn build_initialized(self) -> anyhow::Result<TestAppServer> {
-        self.build_initialized_with_timeout(DEFAULT_REQUEST_TIMEOUT)
+        // The first handshake includes cold subprocess startup on the CI runner.
+        self.build_initialized_with_timeout(Duration::from_secs(60))
             .await
     }
 

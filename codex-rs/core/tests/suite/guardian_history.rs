@@ -12,12 +12,14 @@ use codex_history::InitialHistory;
 use codex_history::ResumedHistory;
 use codex_history::RolloutItem;
 use codex_login::CodexAuth;
+use codex_protocol::AgentPath;
 use codex_protocol::TranscriptFormat;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::models::ImageReference;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
@@ -408,7 +410,7 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
         .build_with_auto_env(&server)
         .await?;
     let plan = r#"{"plan":[{"step":"inspect the repository","status":"completed"}]}"#;
-    let mut inspection: Vec<_> = (0..130)
+    let mut inspection: Vec<_> = (0..155)
         .map(|index| ev_function_call(&format!("initial-{index}"), "update_plan", plan))
         .collect();
     inspection.push(ev_completed("inspection"));
@@ -436,8 +438,10 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
     let mut responses = Vec::new();
     for index in 0..3 {
         if index == 1 {
-            // Force eviction after the first review has saved its transcript cursor.
-            let mut traffic: Vec<_> = (0..130)
+            // Evict the older prefix after a completed review, while retaining the
+            // recent encrypted reply within the transcript's recent-entry limit.
+            // Full fallback must not admit that reply twice.
+            let mut traffic: Vec<_> = (0..10)
                 .map(|index| ev_function_call(&format!("later-{index}"), "update_plan", plan))
                 .collect();
             traffic.push(ev_completed("more-inspection"));
@@ -468,7 +472,22 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
     }
     responses.push(sse(vec![ev_completed("done")]));
     let reviews = mount_sse_sequence(&server, responses).await;
-    test.submit_text_turn("Continue inspecting.").await?;
+    test.codex
+        .submit(Op::InterAgentCommunication {
+            communication: InterAgentCommunication::new_encrypted(
+                AgentPath::root(),
+                AgentPath::root().join("worker").expect("worker path"),
+                Vec::new(),
+                "opaque-parent-restriction".into(),
+                /*trigger_turn*/ true,
+            ),
+            start_options: Default::default(),
+        })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
     let requests = reviews.requests();
     let guardian_requests = requests
         .iter()
@@ -479,7 +498,13 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
         .map(|request| {
             request
                 .message_input_text_groups("user")
-                .last()
+                .into_iter()
+                .rfind(|group| {
+                    group.iter().any(|text| {
+                        text.contains(">>> TRANSCRIPT START\n")
+                            || text.contains(">>> TRANSCRIPT DELTA START\n")
+                    })
+                })
                 .expect("Guardian review prompt")
                 .join("")
         })
@@ -515,9 +540,24 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
         assert!(prompts[1].contains(restriction));
     }
     assert!(prompts[2].contains("review-2"));
-    assert_eq!(
-        guardian_requests[1].body_json()["client_metadata"]["thread_id"],
-        guardian_requests[2].body_json()["client_metadata"]["thread_id"]
+    let expected_messages = guardian_requests[0].inputs_of_type("agent_message");
+    assert_eq!(expected_messages.len(), 1);
+    assert!(expected_messages[0]["id"].is_string());
+    for request in &guardian_requests {
+        assert_eq!(request.inputs_of_type("agent_message"), expected_messages);
+        assert_eq!(
+            request.body_json()["client_metadata"]["thread_id"],
+            guardian_requests[0].body_json()["client_metadata"]["thread_id"],
+            "the completed reviewer is reused across full-transcript fallback",
+        );
+    }
+    let history = test.codex.conversation_history_snapshot().await;
+    assert!(
+        history.review_items().any(|item| {
+            item.id()
+                .is_some_and(|id| Some(id.as_str()) == expected_messages[0]["id"].as_str())
+        }),
+        "full fallback must still select the encrypted reply after eviction"
     );
     test.codex.shutdown_and_wait().await?;
     Ok(())
@@ -704,5 +744,75 @@ async fn guardian_answers_survive_compaction_and_eviction() -> Result<()> {
             .iter()
             .all(|item| item["call_id"] != "inspect-0" && item["call_id"] != "confirm-publish")
     );
+    Ok(())
+}
+
+#[test_case(codex_guardian_context::ContextBudgeting::Fixed; "fixed_capture")]
+#[test_case(codex_guardian_context::ContextBudgeting::Elastic; "elastic_capture")]
+#[tokio::test]
+async fn guardian_storage_policy_applies_before_capture_and_resume(
+    budgeting: codex_guardian_context::ContextBudgeting,
+) -> Result<()> {
+    use codex_guardian_context as guardian_context;
+    const HISTORY_ENTRIES: usize = 140;
+    const FIXED_ENTRY_LIMIT: usize = 128;
+    const ENTRY_TOKENS: usize = 900;
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let mut policy = guardian_context::ElasticBudgetConfig::default();
+    let skills_minimum = guardian_context::DEFAULT_MAX_INPUT_TOKENS
+        - usize::try_from(policy.total_minimum_tokens())?
+        + ENTRY_TOKENS;
+    policy.sections.insert(
+        guardian_context::ElasticSection::TrustedSkills,
+        guardian_context::ElasticSectionLimits::new(skills_minimum, ENTRY_TOKENS)?,
+    );
+    let mut test = test_codex()
+        .with_config(move |config| {
+            config
+                .features
+                .disable(Feature::GuardianReuseParentCompaction)
+                .expect("unconstrained feature");
+            config.guardian_sync_elastic_budget =
+                (budgeting == guardian_context::ContextBudgeting::Elastic).then_some(policy);
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    let originals = (0..HISTORY_ENTRIES).map(|index| serde_json::from_value(json!({
+        "type": "message", "id": format!("storage-{index}"), "role": "assistant",
+        "content": [{"type": "output_text", "text": format!("Complete captured evidence {index}.")}]
+    }))).collect::<Result<Vec<_>, _>>()?;
+    test.codex.inject_response_items(originals).await?;
+    let captured = test.codex.conversation_history_snapshot().await;
+    // Capture must preserve the recorded originals, including host-assigned annotations.
+    let originals = captured
+        .items()
+        .filter(|item| item.id().is_some_and(|id| id.starts_with("storage-")))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(originals.len(), HISTORY_ENTRIES);
+    test.codex.ensure_rollout_materialized().await;
+    test.codex.flush_rollout().await?;
+    let history = test.codex.load_history(/*include_archived*/ false).await?;
+    test.codex =
+        super::guardian_checkpoint_migration::resume(&test, &test.codex, history.items).await?;
+    let restored = test.codex.conversation_history_snapshot().await;
+    for history in [captured, restored] {
+        let retained = history
+            .review_items()
+            .filter(|item| item.id().is_some_and(|id| id.starts_with("storage-")))
+            .cloned()
+            .collect::<Vec<_>>();
+        let expected = match budgeting {
+            guardian_context::ContextBudgeting::Fixed => {
+                // Startup entries share the pool, so compare the bounded complete suffix.
+                assert!((1..=FIXED_ENTRY_LIMIT).contains(&retained.len()));
+                &originals[originals.len() - retained.len()..]
+            }
+            guardian_context::ContextBudgeting::Elastic => originals.as_slice(),
+        };
+        assert_eq!(retained, expected);
+    }
+    test.codex.shutdown_and_wait().await?;
     Ok(())
 }

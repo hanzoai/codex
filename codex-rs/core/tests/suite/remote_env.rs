@@ -51,6 +51,8 @@ use codex_history::RolloutItem;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
 use codex_network_proxy::NetworkProxyConfig;
+use codex_protocol::approvals::GuardianAssessmentStatus;
+use codex_protocol::approvals::GuardianReviewReason;
 use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::config_types::CollaborationMode;
@@ -63,6 +65,9 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::PermissionProfileSnapshot;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::SandboxPermissions;
+use codex_protocol::models::input_text;
+use codex_protocol::openai_models::GuardianModelPolicy;
+use codex_protocol::openai_models::GuardianReviewMode;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -188,14 +193,21 @@ impl ContextContributor for ReadyCapabilityRootsTestExtension {
         &'a self,
         input: WorldStateContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<WorldStateSectionContribution>> {
+        let roots = input
+            .step_store
+            .get::<Vec<codex_exec_server::ResolvedSelectedCapabilityRoot>>()
+            .expect("captured capability roots should be present in step state");
+        let selected_roots = roots
+            .iter()
+            .map(|root| root.selected_root().clone())
+            .collect::<Vec<_>>();
         if let Some(observed_roots) = &self.observed_roots {
             observed_roots
                 .lock()
                 .expect("observed capability roots should not be poisoned")
-                .push(input.ready_selected_capability_roots.to_vec());
+                .push(selected_roots.clone());
         }
-        let root_ids = input
-            .ready_selected_capability_roots
+        let root_ids = selected_roots
             .iter()
             .map(|root| root.id.clone())
             .collect::<Vec<_>>();
@@ -209,7 +221,7 @@ impl ContextContributor for ReadyCapabilityRootsTestExtension {
                         Some(RenderedWorldStateFragment::new(
                             "user",
                             ("<ready_capability_roots>", "</ready_capability_roots>"),
-                            body.clone(),
+                            input_text(body.clone()),
                         )),
                     )
                 },
@@ -611,6 +623,7 @@ async fn environment_permissions_follow_configuration_ownership() -> Result<()> 
                 test.config.cwd.clone(),
                 vec![TurnEnvironmentRequest {
                     config: EnvironmentConfigState::Ready(EnvironmentConfig {
+                        environment_hooks: Default::default(),
                         allow_login_shell: test.config.permissions.allow_login_shell,
                         workspace_roots: selection.workspace_roots.clone(),
                         permission_profile: owner_permission_profile,
@@ -707,10 +720,7 @@ async fn environment_permissions_follow_configuration_ownership() -> Result<()> 
             turn_context.permission_profile,
             turn_context.active_permission_profile
         ),
-        (
-            Some(PermissionProfile::read_only()),
-            Some(owner_active_profile)
-        )
+        (PermissionProfile::read_only(), Some(owner_active_profile))
     );
 
     Ok(())
@@ -808,7 +818,7 @@ async fn executor_profile_roots_survive_settings_restore_and_turn_recording() ->
             context.permission_profile,
             context.active_permission_profile,
         ),
-        (Some(expected_profile), Some(active_profile))
+        (expected_profile, Some(active_profile))
     );
     Ok(())
 }
@@ -1404,7 +1414,9 @@ async fn read_exec_server_json(websocket: &mut WebSocketStream<TcpStream>) -> Va
     }
 }
 
-async fn accept_initialized_exec_server(listener: TcpListener) -> WebSocketStream<TcpStream> {
+pub(super) async fn accept_initialized_exec_server(
+    listener: TcpListener,
+) -> WebSocketStream<TcpStream> {
     let (stream, _) = listener.accept().await.expect("connection");
     let mut websocket = accept_async(stream).await.expect("websocket handshake");
 
@@ -1443,12 +1455,7 @@ async fn send_environment_info(websocket: &mut WebSocketStream<TcpStream>) {
         .expect("environment info response");
 }
 
-async fn serve_environment_info(listener: TcpListener) {
-    let mut websocket = accept_initialized_exec_server(listener).await;
-    send_environment_info(&mut websocket).await;
-}
-
-async fn serve_environment_with_agents_md(
+pub(super) async fn serve_environment_with_agents_md(
     listener: TcpListener,
     contents: &str,
     attach: tokio::sync::oneshot::Receiver<()>,
@@ -1465,12 +1472,20 @@ async fn serve_environment_with_instruction_files(
     contents: &str,
     skill: Option<&str>,
     attach: tokio::sync::oneshot::Receiver<()>,
-    mut shutdown: tokio::sync::oneshot::Receiver<()>,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
 ) -> usize {
     let mut websocket = accept_initialized_exec_server(listener).await;
     attach.await.expect("attach signal");
     send_environment_info(&mut websocket).await;
+    serve_instruction_file_requests(websocket, contents, skill, shutdown).await
+}
 
+async fn serve_instruction_file_requests(
+    mut websocket: WebSocketStream<TcpStream>,
+    contents: &str,
+    skill: Option<&str>,
+    mut shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> usize {
     let mut agents_md_reads = 0;
     loop {
         let request = tokio::select! {
@@ -1614,11 +1629,13 @@ impl NoiseRendezvousConnectProvider for OfflineThenReadyNoiseConnectProvider {
 struct NoopRegistryAuthProvider;
 
 impl AuthProvider for NoopRegistryAuthProvider {
-    fn add_auth_headers(&self, _: &mut HeaderMap) {}
+    fn add_auth_headers(&self, _: &mut HeaderMap) -> Result<(), codex_api::AuthError> {
+        Ok(())
+    }
 }
 
 async fn wait_for_response_request_count(response_mock: &ResponseMock, expected_count: usize) {
-    timeout(Duration::from_secs(5), async {
+    timeout(Duration::from_secs(30), async {
         while response_mock.requests().len() < expected_count {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1654,6 +1671,7 @@ async fn shared_executor_keeps_ready_capability_roots_scoped_to_each_attachment(
     for config in [
         EnvironmentConfigState::Pending,
         EnvironmentConfigState::Ready(EnvironmentConfig {
+            environment_hooks: Default::default(),
             allow_login_shell: false,
             workspace_roots: selection.workspace_roots.clone(),
             permission_profile: permission_profile.clone(),
@@ -1696,6 +1714,7 @@ async fn shared_executor_keeps_ready_capability_roots_scoped_to_each_attachment(
         .start_thread(StartThreadOptions {
             environments: Some(vec![TurnEnvironmentRequest {
                 config: EnvironmentConfigState::Ready(EnvironmentConfig {
+                    environment_hooks: Default::default(),
                     allow_login_shell: true,
                     workspace_roots: selection.workspace_roots.clone(),
                     permission_profile: permission_profile.clone(),
@@ -1722,6 +1741,7 @@ async fn shared_executor_keeps_ready_capability_roots_scoped_to_each_attachment(
                 test.config.cwd.clone(),
                 vec![TurnEnvironmentRequest {
                     config: EnvironmentConfigState::Ready(EnvironmentConfig {
+                        environment_hooks: Default::default(),
                         allow_login_shell: false,
                         workspace_roots: selection.workspace_roots.clone(),
                         permission_profile: permission_profile.clone(),
@@ -1783,6 +1803,7 @@ async fn shared_executor_keeps_ready_capability_roots_scoped_to_each_attachment(
                     test.config.cwd.clone(),
                     vec![TurnEnvironmentRequest {
                         config: EnvironmentConfigState::Ready(EnvironmentConfig {
+                            environment_hooks: Default::default(),
                             allow_login_shell: false,
                             workspace_roots: selection.workspace_roots.clone(),
                             permission_profile: permission_profile.clone(),
@@ -1843,6 +1864,7 @@ async fn owner_network_policy_rejects_unsupported_environment_authority() -> Res
         .first()
         .context("thread should select its executor environment")?;
     let owner_config = EnvironmentConfig {
+        environment_hooks: Default::default(),
         allow_login_shell: test.config.permissions.allow_login_shell,
         workspace_roots: selection.workspace_roots.clone(),
         permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::Disabled),
@@ -1944,6 +1966,7 @@ async fn pending_attachment_installs_configuration_before_waiting_turn_resumes()
         },
     };
     let owner_config = |id: &str, allow_login_shell: bool| EnvironmentConfig {
+        environment_hooks: Default::default(),
         allow_login_shell,
         workspace_roots: vec![selection.cwd.clone(), owner_workspace_root.clone()],
         permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::read_only()),
@@ -2386,6 +2409,7 @@ async fn future_pending_environment_can_finish_without_retargeting_the_active_tu
         ..active.clone()
     };
     let owner_config = |selection: &TurnEnvironmentSelection, id: &str| EnvironmentConfig {
+        environment_hooks: Default::default(),
         allow_login_shell: test.config.permissions.allow_login_shell,
         workspace_roots: selection.workspace_roots.clone(),
         permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::read_only()),
@@ -3089,6 +3113,7 @@ async fn deferred_executor_spawn_agent_inherits_ready_step_environments(
         cwd: PathUri::from_abs_path(&test.config.cwd),
         workspace_roots: vec![PathUri::from_abs_path(&test.config.cwd)],
         config: EnvironmentConfigState::Ready(EnvironmentConfig {
+            environment_hooks: Default::default(),
             allow_login_shell: test.config.permissions.allow_login_shell,
             workspace_roots: vec![PathUri::from_abs_path(&test.config.cwd)],
             permission_profile: PermissionProfileSnapshot::active_with_profile_workspace_roots(
@@ -3208,11 +3233,22 @@ async fn deferred_executor_guardian_uses_newly_ready_step_environment(
                     &json!({ "environment_id": REMOTE_ENVIRONMENT_ID }).to_string(),
                 ),
             ),
-            completed_response(
-                "resp-guardian-command",
-                if tool == "mcp_elicitation" {
-                    ev_function_call_with_namespace(EXEC_CALL_ID, "mcp__cua_repl", "js", "{}")
-                } else {
+            if tool == "mcp_elicitation" {
+                let mut call =
+                    ev_function_call_with_namespace(EXEC_CALL_ID, "mcp__cua_repl", "js", "{}");
+                call["item"]["id"] = json!("cua-item");
+                sse(vec![
+                    ev_response_created("resp-guardian-command"),
+                    json!({
+                        "type": "response.metadata", "response_id": "resp-guardian-command",
+                        "metadata": {"guardian": {"item_id": "cua-item", "requires_review": false}}
+                    }),
+                    call,
+                    ev_completed("resp-guardian-command"),
+                ])
+            } else {
+                completed_response(
+                    "resp-guardian-command",
                     ev_function_call(
                         EXEC_CALL_ID,
                         "exec_command",
@@ -3223,9 +3259,9 @@ async fn deferred_executor_guardian_uses_newly_ready_step_environment(
                             "justification": "Review the newly ready remote environment.",
                         })
                         .to_string(),
-                    )
-                },
-            ),
+                    ),
+                )
+            },
             completed_response(
                 "resp-guardian-review",
                 ev_assistant_message(
@@ -3248,16 +3284,28 @@ async fn deferred_executor_guardian_uses_newly_ready_step_environment(
             config.approvals_reviewer = ApprovalsReviewer::AutoReview;
             assert!(config.features.enable(Feature::DeferredExecutor).is_ok());
             if tool == "mcp_elicitation" {
+                config
+                    .features
+                    .enable(Feature::GuardianV2)
+                    .expect("enable Guardian v2");
                 config.mcp_servers.set(serde_json::from_value(json!({
                     "cua_repl": {
                         "command": if cfg!(windows) { "python" } else { "python3" },
                         "args": ["-u", "-c", super::guardian_mcp_elicitation::ELICITATION_SERVER,
-                            json!([{"codex_sensitive_action": true}]).to_string(), "forward"],
+                            "[{}]", "forward"],
                         "default_tools_approval_mode": "approve",
                     }
                 })).expect("MCP server config")).expect("set MCP fixture");
             }
         });
+    if tool == "mcp_elicitation" {
+        builder = builder.with_model_info_override("gpt-5.5", |model| {
+            model.guardian = Some(GuardianModelPolicy {
+                computer_use: Some(GuardianReviewMode::Adaptive),
+                ..Default::default()
+            });
+        });
+    }
     let (attach_tx, attach_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let exec_server = tokio::spawn(serve_environment_with_agents_md(
@@ -3325,7 +3373,14 @@ async fn deferred_executor_guardian_uses_newly_ready_step_environment(
         .await?;
     wait_for_response_request_count(&responses, /*expected_count*/ 1).await;
     attach_tx.send(()).expect("attach remote environment");
+    let mut denial_reason = None;
     wait_for_event(&test.codex, |event| {
+        if let EventMsg::GuardianAssessment(assessment) = event
+            && assessment.status == GuardianAssessmentStatus::Denied
+            && assessment.target_item_id.as_deref() == Some(EXEC_CALL_ID)
+        {
+            denial_reason = assessment.review_reason;
+        }
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
@@ -3344,10 +3399,18 @@ async fn deferred_executor_guardian_uses_newly_ready_step_environment(
         })
         .context("expected Guardian review request")?;
     let guardian_context = guardian_request.message_input_texts("user").join("\n");
+    // Both actions start in the remote-primary step, but the MCP server runs locally.
+    let (owner_denied_path, other_denied_path) = if tool == "mcp_elicitation" {
+        // The low score is labeled local, but the model saw the remote primary's rules.
+        assert_eq!(denial_reason, Some(GuardianReviewReason::FreshRequired));
+        (&local_denied_path, &remote_denied_path)
+    } else {
+        (&remote_denied_path, &local_denied_path)
+    };
     for expected in [
         "<environment id=\"remote\" primary=\"true\">".to_string(),
         format!("<cwd>{}</cwd>", remote_cwd.display()),
-        format!("- path `{}`", remote_denied_path.display()),
+        format!("- path `{}`", owner_denied_path.display()),
     ] {
         assert!(
             guardian_context.contains(&expected),
@@ -3355,8 +3418,8 @@ async fn deferred_executor_guardian_uses_newly_ready_step_environment(
         );
     }
     assert!(
-        !guardian_context.contains(&format!("- path `{}`", local_denied_path.display())),
-        "Guardian used the stale local environment's denied-read policy: {guardian_context}"
+        !guardian_context.contains(&format!("- path `{}`", other_denied_path.display())),
+        "Guardian used the other environment's denied-read policy: {guardian_context}"
     );
     let rejection = requests
         .last()
@@ -3540,7 +3603,15 @@ async fn deferred_executor_compaction_preserves_then_updates_environment_once() 
     })
     .await;
 
-    serve_environment_info(listener).await;
+    let mut websocket = accept_initialized_exec_server(listener).await;
+    send_environment_info(&mut websocket).await;
+    let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+    let executor = tokio::spawn(serve_instruction_file_requests(
+        websocket,
+        "",
+        /*skill*/ None,
+        shutdown_rx,
+    ));
     test.codex
         .submit(Op::UserInputAnswer {
             id: request.turn_id,
@@ -3627,6 +3698,8 @@ async fn deferred_executor_compaction_preserves_then_updates_environment_once() 
         Some(&json!("zsh"))
     );
 
+    shutdown.send(()).expect("stop executor");
+    executor.await?;
     Ok(())
 }
 

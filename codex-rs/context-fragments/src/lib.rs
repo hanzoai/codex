@@ -6,7 +6,9 @@ mod fragment;
 mod recap_prompt;
 
 pub use additional_context::AdditionalContextDeveloperFragment;
+pub use additional_context::AdditionalContextToolOutput;
 pub use additional_context::AdditionalContextUserFragment;
+pub use additional_context::MAX_ADDITIONAL_CONTEXT_VALUE_TOKENS;
 pub use annotated_content::AnnotatedContent;
 pub use annotated_content::message_from_parts;
 pub use annotated_content::set_annotated_content;
@@ -17,3 +19,6 @@ pub use fragment::ContextualUserFragment;
 pub use fragment::RenderedFragment;
 
 pub use recap_prompt::RecapPrompt;
+
+/// Shared classification for compaction summaries produced by core and filtered by Guardian.
+pub const COMPACTION_SUMMARY_KIND: &str = "compaction.summary";

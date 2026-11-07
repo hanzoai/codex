@@ -226,6 +226,7 @@ pub(crate) fn simulate_stream_markdown_for_tests(
 mod tests {
     use super::*;
     use crate::render::highlight::foreground_style_for_scopes;
+    use pretty_assertions::assert_eq;
     use ratatui::style::Color;
 
     #[tokio::test]
@@ -254,7 +255,10 @@ mod tests {
         let l = &out[0];
         assert_eq!(
             l.style.fg,
-            foreground_style_for_scopes(&["markup.quote"]).unwrap().fg,
+            foreground_style_for_scopes(&["markup.quote"])
+                .unwrap()
+                .fg
+                .map(|color| crate::style::readable_color_on(color, /*background*/ None)),
             "expected themed blockquote foreground, got {:?}",
             l.style.fg
         );
@@ -270,25 +274,20 @@ mod tests {
         let non_blank: Vec<_> = out
             .into_iter()
             .filter(|l| {
-                let s = l
-                    .spans
-                    .iter()
-                    .map(|sp| sp.content.clone())
-                    .collect::<Vec<_>>()
-                    .join("");
+                let s = l.to_string();
                 let t = s.trim();
                 // Ignore quote-only blank lines like ">" inserted at paragraph boundaries.
                 !(t.is_empty() || t == ">")
             })
             .collect();
         assert_eq!(non_blank.len(), 2);
+        let expected_color = foreground_style_for_scopes(&["markup.quote"])
+            .unwrap()
+            .fg
+            .map(|color| crate::style::readable_color_on(color, /*background*/ None));
         assert_eq!(
-            non_blank[0].style.fg,
-            foreground_style_for_scopes(&["markup.quote"]).unwrap().fg
-        );
-        assert_eq!(
-            non_blank[1].style.fg,
-            foreground_style_for_scopes(&["markup.quote"]).unwrap().fg
+            [non_blank[0].style.fg, non_blank[1].style.fg],
+            [expected_color; 2]
         );
     }
 
@@ -299,14 +298,11 @@ mod tests {
             /*finalize*/ true,
         );
         assert_eq!(out.len(), 2);
-        assert_eq!(
-            out[0].style.fg,
-            foreground_style_for_scopes(&["markup.quote"]).unwrap().fg
-        );
-        assert_eq!(
-            out[1].style.fg,
-            foreground_style_for_scopes(&["markup.quote"]).unwrap().fg
-        );
+        let expected_color = foreground_style_for_scopes(&["markup.quote"])
+            .unwrap()
+            .fg
+            .map(|color| crate::style::readable_color_on(color, /*background*/ None));
+        assert_eq!([out[0].style.fg, out[1].style.fg], [expected_color; 2]);
     }
 
     #[tokio::test]
@@ -352,27 +348,20 @@ mod tests {
         // Filter out purely blank lines
         let non_blank: Vec<_> = wrapped
             .into_iter()
-            .filter(|l| {
-                let s = l
-                    .spans
-                    .iter()
-                    .map(|sp| sp.content.clone())
-                    .collect::<Vec<_>>()
-                    .join("");
-                !s.trim().is_empty()
-            })
+            .filter(|l| !l.to_string().trim().is_empty())
             .collect();
         assert!(
             non_blank.len() >= 2,
             "expected wrapped blockquote to span multiple lines"
         );
+        let expected_color = foreground_style_for_scopes(&["markup.quote"])
+            .unwrap()
+            .fg
+            .map(|color| crate::style::readable_color_on(color, /*background*/ None));
         for (i, l) in non_blank.iter().enumerate() {
             assert_eq!(
-                l.spans[0].style.fg,
-                foreground_style_for_scopes(&["markup.quote"]).unwrap().fg,
-                "wrapped line {} should preserve green style, got {:?}",
-                i,
-                l.spans[0].style.fg
+                l.spans[0].style.fg, expected_color,
+                "wrapped line {i} should preserve the adapted quote style"
             );
         }
     }

@@ -33,6 +33,8 @@ pub(crate) const KEY_CHORD_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 1);
 const FIRST_DISPATCH_FUNCTION_KEY: u8 = codex_config::types::MAX_FUNCTION_KEY + 1;
 const LAST_DISPATCH_FUNCTION_KEY: u8 = u8::MAX;
 const MAX_LEADER_CHORD_BINDINGS: usize = 1024;
+
+pub(super) mod leader_defaults;
 const LIST_RESERVED_BINDINGS: &[(&str, KeyBinding)] = &[
     ("cancel", ctrl(KeyCode::Char('c'))),
     ("resume_picker.toggle_transcript", ctrl(KeyCode::Char('t'))),
@@ -50,6 +52,15 @@ const WARNINGS_FOCUS: u32 = 1 << 16;
 const VOICE_TOGGLE: u32 = 1 << 17;
 const RAW_KEY_CAPTURE: u32 = 1 << 18;
 const VOICE_TOGGLE_BLOCKED: u32 = 1 << 19;
+const TRANSCRIPT_ACTIONS: u32 = 1 << 20;
+const BACKEND_CYCLING: u32 = 1 << 21;
+const SIDE_PANE: u32 = 1 << 22;
+const MAIN_COMPOSER_FOCUS: u32 = 1 << 23;
+const PANE_DIRECTION: u32 = 1 << 24;
+const OPEN_PANE: u32 = 1 << 25;
+const FOCUSED_SIDE_PANE: u32 = 1 << 26;
+const SIDEBAR_CHOOSER: u32 = 1 << 27;
+const SIDEBAR_RESIZE: u32 = 1 << 28;
 
 const TRANSCRIPT_BROWSING: u32 = 1 << 14;
 
@@ -64,6 +75,11 @@ impl KeymapContextSet {
         Self(context_bit(KeymapContext::List) | context_bit(KeymapContext::Global) | ACTIVITY_FOCUS)
     }
 
+    /// Offer backend cycling only while the new conversation control is visible.
+    pub(crate) const fn with_backend_cycling(self) -> Self {
+        Self(self.0 | BACKEND_CYCLING)
+    }
+
     /// Add only the detail-close action to an owned composer path.
     pub(crate) const fn with_transcript_close(self) -> Self {
         Self(self.0 | context_bit(KeymapContext::Pager) | TRANSCRIPT_CLOSE)
@@ -76,6 +92,15 @@ impl KeymapContextSet {
             context_bit(KeymapContext::Pager)
                 | context_bit(KeymapContext::Global)
                 | TRANSCRIPT_BROWSING,
+        )
+    }
+
+    /// Transcript overlays admit pager bindings plus the explicit selection and Find actions.
+    pub(crate) const fn transcript() -> Self {
+        Self(
+            context_bit(KeymapContext::Pager)
+                | context_bit(KeymapContext::Global)
+                | TRANSCRIPT_ACTIONS,
         )
     }
 
@@ -138,8 +163,63 @@ impl KeymapContextSet {
         }
     }
 
+    pub(crate) const fn with_pane_directions(self) -> Self {
+        Self(self.0 | PANE_DIRECTION)
+    }
+
+    pub(crate) const fn with_main_composer_focus(self) -> Self {
+        Self(self.0 | MAIN_COMPOSER_FOCUS)
+    }
+
+    pub(crate) const fn with_open_pane(self) -> Self {
+        Self(self.0 | OPEN_PANE)
+    }
+
+    pub(crate) const fn with_sidebar_resize(self) -> Self {
+        Self(self.0 | SIDEBAR_RESIZE)
+    }
+
+    pub(crate) const fn with_focused_side_pane(self) -> Self {
+        Self(self.0 | FOCUSED_SIDE_PANE)
+    }
+
+    pub(crate) const fn focused_sidebar_chooser() -> Self {
+        Self(SIDE_PANE | PANE_DIRECTION | MAIN_COMPOSER_FOCUS).with(KeymapContext::List)
+    }
+
+    pub(crate) const fn with_sidebar_chooser(self) -> Self {
+        Self(self.0 | SIDEBAR_CHOOSER)
+    }
+
+    pub(crate) const fn with_side_pane(self) -> Self {
+        Self(self.0 | SIDE_PANE)
+    }
+
     /// Whether this input path can dispatch the action, including focus-specific exclusions.
     pub(crate) fn contains_action(self, action: KeymapActionId) -> bool {
+        if action.context == KeymapContext::Global && action.action == "change_host" {
+            return self.0 & BACKEND_CYCLING != 0;
+        }
+        if action.is_side_pane() {
+            let required = match action.action {
+                "focus_pane_left" | "focus_pane_right" => PANE_DIRECTION,
+                "move_divider_left" | "move_divider_right" => FOCUSED_SIDE_PANE,
+                "toggle_pane_zoom" => OPEN_PANE,
+                "equalize_pane_widths"
+                | "minimize_pane_width"
+                | "maximize_pane_width"
+                | "resize_panes" => SIDEBAR_RESIZE,
+                "focus_main_composer" => MAIN_COMPOSER_FOCUS,
+                "focus_sidebar_content" | "focus_sidebar_tabs" => SIDE_PANE | SIDEBAR_CHOOSER,
+                _ => SIDE_PANE,
+            };
+            return self.0 & required != 0;
+        }
+        if action.context == KeymapContext::Chat && action.action == "open_presets" {
+            return self.contains(KeymapContext::Chat)
+                && self.contains(KeymapContext::Global)
+                && !self.contains(KeymapContext::List);
+        }
         if action.context == KeymapContext::Chat && action.action == "toggle_voice" {
             return self.0 & VOICE_TOGGLE_BLOCKED == 0
                 && (self.0 & VOICE_TOGGLE != 0 || self.contains(KeymapContext::Chat));
@@ -147,13 +227,19 @@ impl KeymapContextSet {
         self.contains(action.context)
             && (self.0 & ACTIVITY_FOCUS == 0
                 || action.context != KeymapContext::Global
-                || matches!(action.action, "focus_activity" | "find_transcript"))
+                || matches!(
+                    action.action,
+                    "focus_activity" | "find_transcript" | "select_transcript"
+                ))
             && (self.0 & TRANSCRIPT_CLOSE == 0
                 || action.context != KeymapContext::Pager
                 || action.action == "close_transcript")
             && (self.0 & TRANSCRIPT_BROWSING == 0
                 || action.context != KeymapContext::Global
-                || action.action == "open_transcript")
+                || matches!(action.action, "open_transcript" | "select_transcript"))
+            && (self.0 & TRANSCRIPT_ACTIONS == 0
+                || action.context != KeymapContext::Global
+                || matches!(action.action, "find_transcript" | "select_transcript"))
             && (!self.is_warnings()
                 || action.context != KeymapContext::List
                 || action.action != "accept")
@@ -199,7 +285,7 @@ pub(crate) struct KeyChord {
 pub(crate) struct RuntimeChordBinding {
     pub(crate) action: KeymapActionId,
     pub(crate) chord: KeyChord,
-    spec: String,
+    pub(crate) spec: String,
 }
 
 impl RuntimeChordBinding {
@@ -207,9 +293,17 @@ impl RuntimeChordBinding {
         self.spec.starts_with("leader ")
     }
 
-    /// Leader consumers also remain active beside pager actions on native transcript surfaces.
+    /// Transcript selection remains active beside pager actions on native transcript surfaces.
     fn overlaps(&self, action: KeymapActionId) -> bool {
         self.action.overlaps(action)
+            || (matches!(
+                (self.action.context, self.action.action),
+                (KeymapContext::Global, "select_transcript")
+            ) || matches!(
+                (action.context, action.action),
+                (KeymapContext::Global, "select_transcript")
+            )) && KeymapContextSet::transcript().contains_action(self.action)
+                && KeymapContextSet::transcript().contains_action(action)
             || self.is_leader()
                 && [
                     KeymapContextSet::browsing(),
@@ -325,11 +419,10 @@ or a two-stroke chord such as `ctrl-x ctrl-t`.",
             });
         }
         super::leader::resolve(keymap, &mut keymap_chords)?;
-        if leader_bindings
+        let explicit_count = leader_bindings
             .len()
-            .saturating_mul(keymap_chords.leader.len())
-            > MAX_LEADER_CHORD_BINDINGS
-        {
+            .saturating_mul(keymap_chords.leader.len());
+        if explicit_count > MAX_LEADER_CHORD_BINDINGS {
             return Err(format!(
                 "Too many leader shortcut combinations (maximum {MAX_LEADER_CHORD_BINDINGS}). \
 Reduce `tui.keymap.global.leader` alternatives or `leader ...` bindings."
@@ -374,6 +467,8 @@ Reduce `tui.keymap.global.leader` alternatives or `leader ...` bindings."
                     !(contexts.0 & TRANSCRIPT_CLOSE != 0
                         && binding.action.context == KeymapContext::Pager
                         && binding.action.action == "close_transcript"),
+                    !(contexts.0 & TRANSCRIPT_ACTIONS != 0
+                        && binding.action.context == KeymapContext::Pager),
                     contexts.is_warnings() && binding.action.context != KeymapContext::List,
                     contexts.is_warnings() && binding.action.context == KeymapContext::Global,
                 )
@@ -444,11 +539,25 @@ pub(crate) enum KeyChordMatch {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct PendingChord {
-    // Persistent leader menus have no deadline.
-    started_at: Option<Instant>,
-    prefix: KeyBinding,
+pub(crate) struct PendingChord {
+    pub(crate) started_at: Instant,
+    persistent: bool,
+    pub(crate) prefix: KeyBinding,
     contexts: KeymapContextSet,
+}
+
+impl PendingChord {
+    pub(crate) fn completions(
+        self,
+        keymap: &RuntimeChordKeymap,
+    ) -> impl Iterator<Item = &RuntimeChordBinding> {
+        keymap.bindings.iter().filter(move |binding| {
+            let (code, modifiers) = binding.chord.completion.parts();
+            keymap
+                .binding_for_completion(self.prefix, KeyEvent::new(code, modifiers), self.contexts)
+                .is_some_and(|active| std::ptr::eq(active, *binding))
+        })
+    }
 }
 
 /// Tracks one pending chord or leader menu without buffering ordinary input.
@@ -462,6 +571,12 @@ impl KeyChordMatcher {
         self.pending.is_some()
     }
 
+    /// Only workspace leaders use the passive overlay. Other chord prefixes retain their footer.
+    pub(crate) fn workspace_leader(&self) -> Option<PendingChord> {
+        self.pending
+            .filter(|p| p.persistent && p.contexts.0 & PANE_DIRECTION != 0)
+    }
+
     /// Derive one presentation for the pending chord from the matcher that owns it.
     pub(crate) fn pending_hint_items(
         &self,
@@ -470,22 +585,10 @@ impl KeyChordMatcher {
     ) -> Option<Vec<(String, String)>> {
         let pending = self.pending?;
         let mut items = vec![(pending.prefix.display_label(), "then".to_string())];
-        for binding in keymap
-            .bindings
-            .iter()
-            .filter(|binding| {
-                let (code, modifiers) = binding.chord.completion.parts();
-                keymap
-                    .binding_for_completion(
-                        pending.prefix,
-                        KeyEvent::new(code, modifiers),
-                        pending.contexts,
-                    )
-                    .is_some_and(|active| std::ptr::eq(active, *binding))
-            })
-            .take(/*n*/ 6)
-        {
+        for binding in pending.completions(keymap).take(/*n*/ 6) {
             let label = match binding.action.action {
+                "open_presets" if pending.persistent => "presets",
+                "change_host" => "cycle",
                 "focus_activity" => "activity",
                 "find_transcript" => "find",
                 "open_warnings" => "warnings",
@@ -528,9 +631,7 @@ impl KeyChordMatcher {
     pub(crate) fn expire(&mut self, contexts: KeymapContextSet) -> bool {
         if self.pending.is_some_and(|pending| {
             pending.contexts != contexts
-                || pending
-                    .started_at
-                    .is_some_and(|started_at| started_at.elapsed() >= KEY_CHORD_TIMEOUT)
+                || (!pending.persistent && pending.started_at.elapsed() >= KEY_CHORD_TIMEOUT)
         }) {
             self.pending = None;
             return true;
@@ -559,7 +660,7 @@ impl KeyChordMatcher {
 
         if let Some(pending) = self.pending.take() {
             if crate::key_hint::plain(KeyCode::Esc).is_press(key_event)
-                || (pending.started_at.is_none() && chord_stroke_matches(pending.prefix, key_event))
+                || (pending.persistent && chord_stroke_matches(pending.prefix, key_event))
             {
                 return KeyChordMatch::Cancelled;
             }
@@ -592,7 +693,8 @@ impl KeyChordMatcher {
                             && binding.action.context.overlaps(KeymapContext::Global)))
             });
             self.pending = Some(PendingChord {
-                started_at: (!persistent).then(Instant::now),
+                started_at: Instant::now(),
+                persistent,
                 prefix,
                 contexts,
             });
@@ -637,7 +739,7 @@ fn dispatch_binding(action: KeymapActionId) -> Option<KeyBinding> {
     ))
 }
 
-fn dispatch_event(action: KeymapActionId) -> Option<KeyEvent> {
+pub(crate) fn dispatch_event(action: KeymapActionId) -> Option<KeyEvent> {
     let (code, modifiers) = dispatch_binding(action)?.parts();
     Some(KeyEvent::new(code, modifiers))
 }
@@ -659,7 +761,7 @@ pub(crate) fn is_dispatch_token_event(event: KeyEvent) -> bool {
     )
 }
 
-fn chord_stroke_matches(binding: KeyBinding, key_event: KeyEvent) -> bool {
+pub(crate) fn chord_stroke_matches(binding: KeyBinding, key_event: KeyEvent) -> bool {
     let ctrl_slash = crate::key_hint::ctrl(KeyCode::Char('/'));
     let ctrl_seven = crate::key_hint::ctrl(KeyCode::Char('7'));
 
@@ -738,6 +840,19 @@ Unbind or remap the existing shortcut before using it as a chord prefix.",
             if previous.action != binding.action
                 && (previous.overlaps(binding.action) || binding.overlaps(previous.action))
                 && previous.chord == binding.chord
+                && !matches!(
+                    (
+                        (previous.action.context, previous.action.action),
+                        (binding.action.context, binding.action.action),
+                    ),
+                    (
+                        (KeymapContext::Global, "find_transcript"),
+                        (KeymapContext::Pager, "find")
+                    ) | (
+                        (KeymapContext::Pager, "find"),
+                        (KeymapContext::Global, "find_transcript")
+                    )
+                )
             {
                 return Err(format!(
                     "Ambiguous `{}` = `{}`: the same chord is already assigned to `{}`. \

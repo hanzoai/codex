@@ -1,6 +1,7 @@
 //! Entry points for the configuration browser and its existing child editors.
 
 use super::ChatWidget;
+use crate::activation_key_guard::ActivationKeySuppression;
 use crate::config_panel::ConfigEditor;
 use crate::config_panel::ConfigEditorHandoff;
 use crate::config_panel::ConfigPanel;
@@ -26,6 +27,12 @@ impl ChatWidget {
         resume_current_availability: crate::config_panel::ResumeCurrentAvailability,
     ) {
         match handoff.editor {
+            ConfigEditor::ModelProviders => {
+                let (view, event) = crate::app::provider::loading();
+                self.bottom_pane.show_selection_view(view);
+                self.app_event_tx
+                    .send(crate::app_event::AppEvent::Provider(event));
+            }
             ConfigEditor::Theme => self.open_theme_picker(),
             ConfigEditor::Effects => {
                 let keymap = self.bottom_pane.list_keymap();
@@ -69,8 +76,11 @@ impl ChatWidget {
             }
         }
         if let Some(activated_at) = handoff.active_at() {
-            self.bottom_pane
-                .suppress_current_view_key_until_release(handoff.activation_key, activated_at);
+            self.suppress_current_view_key_until_release(
+                handoff.activation_key,
+                activated_at,
+                ActivationKeySuppression::ViewTransition,
+            );
         }
         self.bottom_pane.config_editor_opened();
     }
@@ -99,11 +109,13 @@ impl ChatWidget {
             ConfigToggle::PasteDetection => self.bottom_pane.set_disable_paste_burst(
                 /*disabled*/ tui.disable_paste_burst.unwrap_or(/*default*/ false),
             ),
+            ConfigToggle::StatusLineColors => {
+                self.status_surface_overrides.status_line_use_colors = None;
+            }
             ConfigToggle::AutomaticRecaps
             | ConfigToggle::CopyOnSelectClearSelection
             | ConfigToggle::Notifications
             | ConfigToggle::StartInVimMode
-            | ConfigToggle::StatusLineColors
             | ConfigToggle::Tips => {}
         }
         if setting == ConfigToggle::Animations

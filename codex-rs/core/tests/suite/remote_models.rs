@@ -579,7 +579,6 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         visibility: ModelVisibility::List,
         supported_in_api: true,
         input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: false,
         supports_search_tool: false,
         supports_experimental_context: false,
         use_responses_lite: false,
@@ -609,6 +608,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         availability_nux: None,
         apply_patch_tool_type: None,
         web_search_tool_type: Default::default(),
+        web_search_provider: None,
         truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_image_detail_original: false,
         context_window: Some(272_000),
@@ -854,7 +854,6 @@ async fn remote_models_apply_legacy_instructions(auth: CodexAuth) -> Result<()> 
         visibility: ModelVisibility::List,
         supported_in_api: true,
         input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: false,
         supports_search_tool: false,
         supports_experimental_context: false,
         use_responses_lite: false,
@@ -887,6 +886,7 @@ async fn remote_models_apply_legacy_instructions(auth: CodexAuth) -> Result<()> 
         availability_nux: None,
         apply_patch_tool_type: None,
         web_search_tool_type: Default::default(),
+        web_search_provider: None,
         truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_image_detail_original: false,
         context_window: Some(272_000),
@@ -1443,7 +1443,6 @@ fn test_remote_model_with_policy(
         visibility,
         supported_in_api: true,
         input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: false,
         supports_search_tool: false,
         supports_experimental_context: false,
         use_responses_lite: false,
@@ -1473,6 +1472,7 @@ fn test_remote_model_with_policy(
         availability_nux: None,
         apply_patch_tool_type: None,
         web_search_tool_type: Default::default(),
+        web_search_provider: None,
         truncation_policy,
         supports_image_detail_original: false,
         context_window: Some(272_000),
@@ -1538,7 +1538,7 @@ async fn model_catalog_url_supplies_conversation_model_and_instructions() -> Res
     model.visibility = ModelVisibility::List;
     model.supported_in_api = true;
     model.support_verbosity = false;
-    model.used_fallback_model_metadata = false;
+
     model
         .model_messages
         .as_mut()
@@ -1587,5 +1587,83 @@ async fn model_catalog_url_supplies_conversation_model_and_instructions() -> Res
     assert_eq!(request["model"], "gateway-conversation");
     assert_eq!(response.single_request().instructions_text(), instructions);
     assert_eq!(request["text"].get("verbosity"), None);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_catalog_refresh_preserves_tool_search_on_the_next_turn() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = MockServer::start().await;
+    let mut model = codex_models_manager::model_info::model_info_from_slug("gateway-model");
+    model.visibility = ModelVisibility::List;
+    model.supports_search_tool = true;
+
+    let catalog = ModelsResponse {
+        models: vec![model],
+    };
+    Mock::given(method("GET"))
+        .and(path("/codex/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&catalog))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![ev_response_created("first"), ev_completed("first")]),
+            sse(vec![ev_response_created("second"), ev_completed("second")]),
+        ],
+    )
+    .await;
+    let catalog_url = format!("{}/codex/models", server.uri());
+    let test = test_codex()
+        .with_auth(CodexAuth::from_api_key("gateway-api-key"))
+        .with_model("gateway-model")
+        .with_config(move |config| {
+            config.model_provider.model_catalog_url = Some(catalog_url.into());
+            config
+                .features
+                .enable(Feature::ApiKeyModelDiscovery)
+                .unwrap();
+            config.features.enable(Feature::Collab).unwrap();
+            config.features.disable(Feature::MultiAgentV2).unwrap();
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    test.submit_turn("first turn").await?;
+    let first_tools = responses.single_request().body_json()["tools"].clone();
+    assert!(
+        first_tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["type"] == "tool_search"),
+        "the initial catalog must enable deferred tool search"
+    );
+
+    Mock::given(method("GET"))
+        .and(path("/codex/models"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1..)
+        .mount(&server)
+        .await;
+    let manager = test.thread_manager.get_models_manager();
+    manager
+        .refresh_if_new_etag(
+            "changed-etag".into(),
+            codex_core::test_support::default_http_client_factory(),
+        )
+        .await;
+    assert_eq!(manager.get_remote_models().await, catalog.models);
+
+    test.submit_turn("second turn").await?;
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].body_json()["tools"], first_tools);
+    assert_eq!(
+        requests[1].instructions_text(),
+        requests[0].instructions_text()
+    );
     Ok(())
 }

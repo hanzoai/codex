@@ -66,18 +66,42 @@ impl App {
                     &mut *selection;
                 view.finish_copy(cells, completion, current);
             }
+            let passive = self
+                .conversation_frame
+                .side_pane()
+                .map(|panes| panes.passive_thread);
+            for (id, companion) in &mut self.side_companions {
+                let visible = current && passive == Some(*id);
+                if companion
+                    .view
+                    .finish_copy(&companion.cells, completion, visible)
+                    == Some(true)
+                {
+                    companion.view.jump_to_latest();
+                }
+            }
             let follow =
                 self.transcript_view
                     .finish_copy(&self.transcript_cells, completion, current);
+            let pending_exit_key = if current {
+                self.backtrack
+                    .finish_pending_select_exit_key(completion.0, /*select_mode_closed*/ true)
+            } else {
+                None
+            };
             if follow == Some(true) {
                 if self.backtrack.overlay_preview_active {
                     self.close_transcript_overlay(tui);
                 }
                 self.transcript_view.jump_to_latest();
+                self.backtrack.select_exit_key = pending_exit_key;
             }
         }
         if !current || matches!(event, TuiEvent::FocusLost | TuiEvent::Resume) {
             self.transcript_view.cancel_primary();
+            for companion in self.side_companions.values_mut() {
+                companion.view.cancel_primary();
+            }
             self.chat_widget.cancel_composer_primary();
             self.chat_widget
                 .rendered_selection

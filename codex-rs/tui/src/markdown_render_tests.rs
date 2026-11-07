@@ -81,6 +81,31 @@ fn table_url_with_tilde_keeps_complete_hyperlink() {
 }
 
 #[test]
+fn links_keep_their_columns_after_styled_fragments() {
+    let input = "**界** [a](https://example.com/a) _b_ [`c`](https://example.com/c) [d](https://example.com/d)\n\n[e](https://example.com/e)";
+    let lines = super::render_markdown_lines_with_width_cwd_and_hidden_link_destinations(
+        input,
+        /*width*/ None,
+        /*cwd*/ None,
+        &|_| true,
+    );
+    let links = lines
+        .iter()
+        .flat_map(|line| line.hyperlinks.iter())
+        .map(|link| (link.columns.clone(), link.destination.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        links,
+        vec![
+            (3..4, "https://example.com/a"),
+            (7..8, "https://example.com/c"),
+            (9..10, "https://example.com/d"),
+            (0..1, "https://example.com/e"),
+        ],
+    );
+}
+
+#[test]
 fn merged_text_events_preserve_entity_decoding() {
     let source = "https://example.com/a&amp;b~c";
     let destination = "https://example.com/a&b~c";
@@ -755,13 +780,15 @@ fn inline_code() {
 
 #[test]
 fn inline_code_and_file_paths_follow_syntax_theme() {
-    let markdown = "Use `src/main.rs` and [](./src/lib.rs).";
+    let markdown = "# Heading\n\n**Bold** *Italic* [Link](https://example.com)\n\n> Quote\n\n1. Ordered\n\n- Unordered\n\nUse `src/main.rs` and [](./src/lib.rs).";
     let mut rendered = Vec::new();
-    for name in [
-        "catppuccin-mocha",
-        "catppuccin-latte",
-        "ansi",
-        "no-markup-color",
+    for (name, background) in [
+        ("catppuccin-mocha", "dark"),
+        ("catppuccin-mocha", "light"),
+        ("catppuccin-latte", "light"),
+        ("nord", "dark"),
+        ("ansi", "dark"),
+        ("no-markup-color", "dark"),
     ] {
         let theme = if name == "no-markup-color" {
             syntect::highlighting::Theme::default()
@@ -769,7 +796,7 @@ fn inline_code_and_file_paths_follow_syntax_theme() {
             crate::render::highlight::resolve_theme_by_name(name, /*codex_home*/ None)
                 .expect("bundled theme")
         };
-        let colors = if name == "catppuccin-latte" {
+        let colors = if background == "light" {
             crate::terminal_probe::DefaultColors {
                 fg: (30, 30, 30),
                 bg: (255, 255, 255),
@@ -810,7 +837,7 @@ fn inline_code_and_file_paths_follow_syntax_theme() {
             if name == "no-markup-color" {
                 assert_eq!(code_style, ratatui::style::Style::new().fg(accent_color()));
             } else {
-                rendered.push((name, lines));
+                rendered.push((name, background, lines));
             }
         });
     }

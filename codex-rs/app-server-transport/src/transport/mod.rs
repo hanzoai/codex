@@ -47,6 +47,7 @@ pub use unix_socket::DaemonSocketFileGuard;
 pub use unix_socket::acquire_app_server_startup_lock;
 pub use unix_socket::bind_private_daemon_socket;
 pub use unix_socket::start_control_socket_acceptor;
+pub use unix_socket::verified_local_daemon_socket;
 pub use websocket::start_websocket_acceptor;
 
 const INTERNAL_ERROR_CODE: i64 = -32603;

@@ -96,6 +96,7 @@ async fn mcp_tool_results_use_command_hook_output_contract() {
     .expect("object input");
     let handler = ConfiguredHandler {
         builtin: false,
+        plugin_trust: None,
         event_name: HookEventName::PostToolUse,
         matcher: None,
         timeout_sec: 30,
@@ -122,7 +123,7 @@ async fn mcp_tool_results_use_command_hook_output_contract() {
         "security",
         "scan",
         &configured_input,
-        r#"{"tool_input":{"file_path":"/tmp/example.rs"}}"#,
+        &json!({ "tool_input": { "file_path": "/tmp/example.rs" } }),
         /*metadata*/ None,
     )
     .await;

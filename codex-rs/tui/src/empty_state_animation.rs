@@ -208,6 +208,7 @@ impl EmptyStateAnimation {
     /// composer. Typing or clicking stops it for this fresh conversation.
     pub(crate) fn render_first_screen(
         &mut self,
+        screen: Rect,
         available: Rect,
         buffer: &mut Buffer,
         composer: Option<ComposerState>,
@@ -222,8 +223,7 @@ impl EmptyStateAnimation {
             self.cancel_replay();
             return None;
         }
-        let max_width = buffer
-            .area
+        let max_width = screen
             .width
             .saturating_sub(4)
             .min(available.width)

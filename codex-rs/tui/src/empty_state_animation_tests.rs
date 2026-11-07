@@ -20,11 +20,12 @@ fn first_screen_fits_80_columns_and_short_viewports() {
         );
         assert_eq!(
             animation.render_first_screen(
+                screen,
                 free,
                 &mut buffer,
                 Some(ComposerState::Empty),
                 MotionMode::Animated,
-            ),
+            )),
             Some(FRAME_INTERVAL),
         );
         let stage = animation.stage.unwrap();
@@ -41,6 +42,7 @@ fn first_screen_fits_80_columns_and_short_viewports() {
     let mut buffer = Buffer::empty(screen);
     assert_eq!(
         animation.render_first_screen(
+            screen,
             free,
             &mut buffer,
             Some(ComposerState::Empty),
@@ -64,10 +66,11 @@ fn first_screen_fits_80_columns_and_short_viewports() {
     assert_eq!(
         animation.render_first_screen(
             screen,
+            screen,
             &mut buffer,
             Some(ComposerState::Empty),
             MotionMode::Animated,
-        ),
+        )),
         None,
     );
     assert_eq!(animation.stage, None);
@@ -81,7 +84,7 @@ fn first_screen_spins_until_interaction_then_stays_static() {
     let mut buffer = Buffer::empty(screen);
     let draw = |animation: &mut EmptyStateAnimation, buffer: &mut Buffer, composer, motion| {
         buffer.reset();
-        animation.render_first_screen(screen, buffer, composer, motion)
+        animation.render_first_screen(screen, screen, buffer, composer, motion)
     };
     assert_eq!(
         draw(
@@ -425,6 +428,7 @@ fn first_screen_preserves_depth_in_glyphs_without_a_palette_probe() {
     animation.set_test_phase(0.125);
     animation.render_first_screen(
         area,
+        area,
         &mut buffer,
         Some(ComposerState::Empty),
         MotionMode::Animated,
@@ -442,6 +446,7 @@ fn mouse_steers_both_axes_without_dismissing_and_reduced_motion_stays_still() {
     let mut buffer = Buffer::empty(screen);
     animation.render_first_screen(
         screen,
+        screen,
         &mut buffer,
         Some(ComposerState::Empty),
         MotionMode::Animated,
@@ -458,6 +463,7 @@ fn mouse_steers_both_axes_without_dismissing_and_reduced_motion_stays_still() {
     buffer.reset();
     animation.render_first_screen(
         screen,
+        screen,
         &mut buffer,
         Some(ComposerState::Empty),
         MotionMode::Animated,
@@ -467,6 +473,7 @@ fn mouse_steers_both_axes_without_dismissing_and_reduced_motion_stays_still() {
     buffer.reset();
     assert_eq!(
         animation.render_first_screen(
+            screen,
             screen,
             &mut buffer,
             Some(ComposerState::Empty),

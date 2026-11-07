@@ -99,6 +99,7 @@ fn error(text: &str) -> HookOutputEntry {
 fn handler() -> ConfiguredHandler {
     ConfiguredHandler {
         builtin: false,
+        plugin_trust: None,
         event_name: HookEventName::Interrupt,
         matcher: None,
         timeout_sec: 600,

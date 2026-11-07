@@ -2,11 +2,14 @@
 
 use super::*;
 use crate::context::ContextualUserFragment;
+use crate::context::world_state::WorldStateUpdateContent;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ContentItemKind;
 use codex_protocol::models::InternalChatMessageMetadataPassthrough;
+use codex_protocol::models::input_text;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::sync::Arc;
 
 struct TestFragment {
     role: &'static str,
@@ -31,8 +34,8 @@ impl ContextualUserFragment for TestFragment {
         ("", "")
     }
 
-    fn body(&self) -> String {
-        self.text.to_string()
+    fn body(&self) -> ContentItem {
+        input_text(self.text.to_string())
     }
 }
 
@@ -75,7 +78,7 @@ fn additional_tools() -> ResponseItem {
     ResponseItem::AdditionalTools {
         id: None,
         role: "developer".to_string(),
-        tools: vec![json!({"type": "function", "name": "lookup", "parameters": {}})],
+        tools: Arc::from([json!({"type": "function", "name": "lookup", "parameters": {}})]),
     }
 }
 

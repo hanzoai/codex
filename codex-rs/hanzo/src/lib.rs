@@ -24,7 +24,10 @@ pub const RELEASE_NOTES: &str = "https://github.com/hanzoai/dev/releases/latest"
 pub const RELEASE_TAG_PREFIX: &str = "v";
 /// The installer every Hanzo tool comes from; run again, it updates.
 pub const INSTALL_URL: &str = "https://hanzo.sh";
-pub const INSTALL_SCRIPT: &str = "curl -fsSL https://hanzo.sh | sh -s -- -q dev";
+/// The update command: the installer runs only once it has downloaded whole, so a failed
+/// download fails the update rather than piping nothing into `sh`.
+pub const INSTALL_SCRIPT: &str =
+    r#"s=$(curl -fsSL https://hanzo.sh) && printf '%s\n' "$s" | sh -s -- -q dev"#;
 /// The npm package Dev ships as, its registry document, and the variable its launcher
 /// sets so the binary knows npm owns it.
 pub const NPM_PACKAGE: &str = "@hanzo/dev";

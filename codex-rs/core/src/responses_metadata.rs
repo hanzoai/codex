@@ -8,6 +8,7 @@ use codex_analytics::CompactionReason;
 use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_git_utils::SanitizedGitUrl;
+use codex_protocol::ContextWindowId;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::McpAttribution;
 use codex_protocol::protocol::SessionSource;
@@ -19,7 +20,6 @@ use http::HeaderMap as ApiHeaderMap;
 use http::HeaderValue;
 use serde::Serialize;
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::client::X_CODEX_INSTALLATION_ID_HEADER;
 use crate::client::X_CODEX_PARENT_THREAD_ID_HEADER;
@@ -67,6 +67,7 @@ pub(crate) const WORKSPACES_KEY: &str = "workspaces";
 // when submitting a turn, but they must not override fields owned by core.
 const RESERVED_METADATA_KEYS: &[&str] = &[
     "guardian_credits_requested",
+    "guardian_recorded_items",
     MCP_ATTRIBUTION_CLIENT_METADATA_KEY,
     INSTALLATION_ID_KEY,
     X_CODEX_INSTALLATION_ID_HEADER,
@@ -108,6 +109,7 @@ const RESERVED_METADATA_KEYS: &[&str] = &[
 // These keys were previously valid user configuration. Accept existing configs while filtering
 // their values before constructing Core-owned request metadata.
 const BACKWARD_COMPATIBLE_RESERVED_METADATA_KEYS: &[&str] = &[
+    "guardian_recorded_items",
     WINDOW_NUMBER_KEY,
     FORKED_FROM_ORDINAL_EXCLUSIVE_KEY,
     ANALYTICS_ENABLED_KEY,
@@ -232,8 +234,12 @@ pub(crate) enum TurnToolSource {
 /// truth.
 #[derive(Clone, Debug)]
 pub struct CodexResponsesMetadata {
+    /// The private reviewer forwards recorded items through its parent's raw-event subscription.
+    pub(crate) guardian_recorded_items: bool,
     /// Guardian parent reference; projected only onto a Guardian request.
     pub(crate) parent_response_id: Option<String>,
+    /// Transport-only parent pin; never projected into headers or body metadata.
+    pub(crate) parent_routing_affinity: Option<codex_http_client::ChatGptRoutingAffinity>,
     pub(crate) installation_id: String,
     pub(crate) session_id: String,
     pub(crate) thread_id: String,
@@ -242,7 +248,7 @@ pub struct CodexResponsesMetadata {
     pub(crate) routing_hint: Option<HeaderValue>,
     pub(crate) window_id: String,
     pub(crate) window_number: Option<u64>,
-    pub(crate) context_window_id: Option<Uuid>,
+    pub(crate) context_window_id: Option<ContextWindowId>,
     pub(crate) history_initialization: Option<HistoryInitialization>,
     pub(crate) request_kind: Option<CodexResponsesRequestKind>,
     pub(crate) forked_from_thread_id: Option<ThreadId>,
@@ -280,6 +286,8 @@ impl CodexResponsesMetadata {
     ) -> Self {
         Self {
             parent_response_id: None,
+            parent_routing_affinity: None,
+            guardian_recorded_items: false,
             installation_id,
             session_id,
             thread_id,
@@ -420,6 +428,7 @@ impl CodexResponsesMetadata {
         let has_request_identity =
             request_kind.is_some_and(CodexResponsesRequestKind::has_thread_identity);
         CodexTurnMetadataPayload {
+            guardian_recorded_items: self.guardian_recorded_items.then_some(true),
             installation_id: has_request_identity.then_some(self.installation_id.as_str()),
             session_id: has_thread_identity.then_some(self.session_id.as_str()),
             thread_id: has_thread_identity.then_some(self.thread_id.as_str()),
@@ -430,7 +439,7 @@ impl CodexResponsesMetadata {
             window_id: has_request_identity.then_some(self.window_id.as_str()),
             window_number: has_request_identity.then_some(self.window_number).flatten(),
             context_window_id: has_request_identity
-                .then_some(self.context_window_id)
+                .then_some(self.context_window_id.as_ref())
                 .flatten(),
             request_kind: request_kind_value,
             history_initialization: self.history_initialization,
@@ -547,6 +556,8 @@ fn non_empty_workspaces(
 #[derive(Serialize)]
 struct CodexTurnMetadataPayload<'a> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    guardian_recorded_items: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     installation_id: Option<&'a str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session_id: Option<&'a str>,
@@ -561,7 +572,7 @@ struct CodexTurnMetadataPayload<'a> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     window_number: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    context_window_id: Option<Uuid>,
+    context_window_id: Option<&'a ContextWindowId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     request_kind: Option<&'static str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

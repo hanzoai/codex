@@ -20,7 +20,7 @@ pub enum UpdateAction {
     PnpmGlobalLatest,
     /// Update via `brew upgrade hanzoai/tap/hanzo-dev`.
     BrewUpgrade,
-    /// Update via `curl -fsSL https://hanzo.sh | sh -s -- -q dev`.
+    /// Update via the standalone Unix installer.
     StandaloneUnix,
     /// Update via `$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex`.
     StandaloneWindows,
@@ -159,7 +159,10 @@ mod tests {
             UpdateAction::StandaloneUnix.command_args(),
             (
                 "sh",
-                &["-c", "curl -fsSL https://hanzo.sh | sh -s -- -q dev"][..],
+                &[
+                    "-c",
+                    r#"s=$(curl -fsSL https://hanzo.sh) && printf '%s\n' "$s" | sh -s -- -q dev"#
+                ][..],
             )
         );
         assert_eq!(
@@ -174,6 +177,23 @@ mod tests {
                 ][..],
             )
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_unix_update_fails_when_installer_download_fails() {
+        let (command, args) = UpdateAction::StandaloneUnix.command_args();
+        let offline_command = args[1].replace(hanzo::INSTALL_URL, "file:///dev/null/hanzo.sh");
+        assert_ne!(offline_command, args[1], "installer URL must be replaced");
+        let output = std::process::Command::new(command)
+            .args([args[0], &offline_command])
+            .env_clear()
+            .env("HOME", "/dev/null")
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("run standalone Unix update command");
+
+        assert!(!output.status.success(), "{output:?}");
     }
 }
 

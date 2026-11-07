@@ -38,6 +38,7 @@ zstd = { workspace = true }
 hanzo = { workspace = true }
 
 [dev-dependencies]
+codex-protocol-test-support = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

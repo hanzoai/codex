@@ -6,8 +6,8 @@
 //!
 //! Responsibilities:
 //!
-//! 1. Define strongly typed config contexts/actions with unknown-field
-//!    rejection.
+//! 1. Define strongly typed config contexts/actions. Unknown fields are ignored
+//!    during deserialization and reported by the shared strict-config policy.
 //! 2. Normalize accepted key aliases into canonical names.
 //! 3. Reject malformed bindings early with user-facing diagnostics.
 //!
@@ -131,17 +131,46 @@ impl KeybindingsSpec {
 
 /// Global keybindings. These are used when a context does not define an override.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiGlobalKeymap {
     /// Prefix for persistent, context-aware shortcut menus.
     pub leader: Option<KeybindingsSpec>,
+    /// Change where a new conversation runs.
+    pub change_host: Option<KeybindingsSpec>,
+    /// Focus the main conversation composer.
+    pub focus_main_composer: Option<KeybindingsSpec>,
+    /// Focus the side conversation, or hide it when already focused.
+    pub focus_sidebar_content: Option<KeybindingsSpec>,
+    /// Open the sidebar tab chooser.
+    pub focus_sidebar_tabs: Option<KeybindingsSpec>,
+    /// Hide the focused sidebar pane.
+    pub hide_pane: Option<KeybindingsSpec>,
+    /// Focus the parent conversation.
+    pub focus_pane_left: Option<KeybindingsSpec>,
+    /// Focus the open side conversation.
+    pub focus_pane_right: Option<KeybindingsSpec>,
+    /// Minimize the focused pane width.
+    pub minimize_pane_width: Option<KeybindingsSpec>,
+    /// Maximize the focused pane width.
+    pub maximize_pane_width: Option<KeybindingsSpec>,
+    /// Equalize visible pane widths.
+    pub equalize_pane_widths: Option<KeybindingsSpec>,
+    /// Enter keyboard resize mode for visible dividers.
+    pub resize_panes: Option<KeybindingsSpec>,
+    /// Move the divider left when the side pane has focus.
+    pub move_divider_left: Option<KeybindingsSpec>,
+    /// Move the divider right when the side pane has focus.
+    pub move_divider_right: Option<KeybindingsSpec>,
+    /// Zoom or restore the focused pane.
+    pub toggle_pane_zoom: Option<KeybindingsSpec>,
     /// Open the shared agent-session overview.
     pub open_agents: Option<KeybindingsSpec>,
     /// Open the transcript overlay.
     pub open_transcript: Option<KeybindingsSpec>,
     /// Find text in the full transcript.
     pub find_transcript: Option<KeybindingsSpec>,
+    /// Enter keyboard selection mode for the transcript.
+    pub select_transcript: Option<KeybindingsSpec>,
     /// Focus activity groups in the owned transcript to inspect their details.
     pub focus_activity: Option<KeybindingsSpec>,
     /// Open the external editor for the current draft.
@@ -168,9 +197,10 @@ pub struct TuiGlobalKeymap {
 
 /// Chat context keybindings.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiChatKeymap {
+    /// Open saved prompts and slash commands.
+    pub open_presets: Option<KeybindingsSpec>,
     /// Start or stop a voice conversation.
     pub toggle_voice: Option<KeybindingsSpec>,
     /// Toggle the microphone in an active voice conversation.
@@ -195,7 +225,6 @@ pub struct TuiChatKeymap {
 
 /// Composer context keybindings. These override corresponding `global` actions.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiComposerKeymap {
     /// Submit the current composer draft.
@@ -212,7 +241,6 @@ pub struct TuiComposerKeymap {
 
 /// Editor context keybindings for text editing inside text areas.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiEditorKeymap {
     /// Insert a newline in the editor.
@@ -386,7 +414,6 @@ pub struct TuiVimOperatorKeymap {
 
 /// Search motions shared by Vim normal and operator-pending input.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiVimSearchKeymap {
     /// Search forward in the active buffer (`/`).
@@ -401,7 +428,6 @@ pub struct TuiVimSearchKeymap {
 
 /// Vim text-object keybindings for modal editing inside text areas.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiVimTextObjectKeymap {
     /// Text object: word.
@@ -426,7 +452,6 @@ pub struct TuiVimTextObjectKeymap {
 
 /// Pager context keybindings for transcript and static overlays.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiPagerKeymap {
     /// Scroll up by one row.
@@ -455,7 +480,6 @@ pub struct TuiPagerKeymap {
 
 /// List selection context keybindings for popup-style selectable lists.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiListKeymap {
     /// Move list selection up.
@@ -482,7 +506,6 @@ pub struct TuiListKeymap {
 
 /// Shortcuts specific to the shared agents overview.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiAgentsKeymap {
     /// Open the session resume picker.
@@ -513,7 +536,6 @@ pub struct TuiAgentsKeymap {
 
 /// Approval overlay keybindings.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiApprovalKeymap {
     /// Open the full-screen approval details view.
@@ -545,7 +567,6 @@ pub struct TuiApprovalKeymap {
 /// `RuntimeKeymap` first so precedence, empty-list unbinding, and duplicate-key
 /// validation are applied consistently.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiKeymap {
     #[serde(default)]
@@ -764,75 +785,6 @@ See the Dev keymap documentation for supported actions and examples."
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn misplaced_action_at_keymap_root_is_rejected() {
-        // Actions placed directly under [tui.keymap] instead of a context
-        // sub-table (e.g. [tui.keymap.global]) must produce a parse error,
-        // not be silently ignored.
-        let toml_input = r#"
-            open_transcript = "ctrl-s"
-        "#;
-        let result = toml::from_str::<TuiKeymap>(toml_input);
-        assert!(
-            result.is_err(),
-            "expected error for action at keymap root, got: {result:?}"
-        );
-    }
-
-    #[test]
-    fn misspelled_action_under_context_is_rejected() {
-        let toml_input = r#"
-            [global]
-            open_transcrip = "ctrl-x"
-        "#;
-        let err = toml::from_str::<TuiKeymap>(toml_input)
-            .expect_err("expected unknown action under context");
-        assert!(
-            err.to_string().contains("open_transcrip"),
-            "expected error to mention misspelled field, got: {err}"
-        );
-    }
-
-    #[test]
-    fn misspelled_vim_text_object_action_is_rejected() {
-        let toml_input = r#"
-            [vim_text_object]
-            double_quotes = "shift-quote"
-        "#;
-        let err = toml::from_str::<TuiKeymap>(toml_input)
-            .expect_err("expected unknown vim text object action");
-        assert!(
-            err.to_string().contains("double_quotes"),
-            "expected error to mention misspelled field, got: {err}"
-        );
-    }
-
-    #[test]
-    fn removed_backtrack_actions_are_rejected() {
-        for (context, action) in [
-            ("global", "edit_previous_message"),
-            ("global", "confirm_edit_previous_message"),
-            ("chat", "edit_previous_message"),
-            ("chat", "confirm_edit_previous_message"),
-            ("pager", "edit_previous_message"),
-            ("pager", "edit_next_message"),
-            ("pager", "confirm_edit_message"),
-        ] {
-            let toml_input = format!(
-                r#"
-                [{context}]
-                {action} = "ctrl-x"
-                "#
-            );
-            let err = toml::from_str::<TuiKeymap>(&toml_input)
-                .expect_err("expected removed backtrack action to be rejected");
-            assert!(
-                err.to_string().contains(action),
-                "expected error to mention removed field {action}, got: {err}"
-            );
-        }
-    }
 
     #[test]
     fn action_under_global_context_is_accepted() {

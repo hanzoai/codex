@@ -193,6 +193,7 @@ chatgpt_base_url = "{}/source/backend-api"
 analytics.enabled = false
 check_for_update_on_startup = false
 features.daemon_auto_start = {}
+features.mcp_oauth_refresh_coordination = true
 model_provider = "local"
 model = "test-model"
 sandbox_mode = "workspace-write"
@@ -306,8 +307,6 @@ trust_level = "trusted"
         "--enable".into(),
         "worktrees".into(),
         "--no-alt-screen".into(),
-        "-c".into(),
-        "features.mcp_oauth_refresh_coordination=true".into(),
         "-c".into(),
         "suppress_unstable_features_warning=true".into(),
     ];
@@ -820,7 +819,7 @@ trust_level = "trusted"
         assert!(context.contains("managed cloud instructions"), "{context}");
         if previous.is_empty() {
             // A legacy summary still says launcher A, but persisted turns use checkout B.
-            let sqlite = codex_state::SqliteConfig::from_sqlite_home(
+            let sqlite = codex_state::SqliteConfig::new_for_testing(
                 codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(&home)?,
             );
             let db = sqlite.open_read_write_pool(&sqlite.state_db_path()).await?;
