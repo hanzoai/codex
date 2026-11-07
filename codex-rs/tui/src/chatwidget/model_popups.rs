@@ -748,11 +748,12 @@ impl ChatWidget {
             ReasoningEffortConfig::Low => "Low".to_string(),
             ReasoningEffortConfig::Medium => "Medium".to_string(),
             ReasoningEffortConfig::High => "High".to_string(),
-            ReasoningEffortConfig::XHigh => "Extra high".to_string(),
+            // Hanzo: upstream's xhigh is the table's `max`.
+            ReasoningEffortConfig::XHigh => capitalized(hanzo::effort::shown("xhigh")),
             ReasoningEffortConfig::Max => "Max".to_string(),
             ReasoningEffortConfig::Ultra => "Ultra".to_string(),
             ReasoningEffortConfig::Persistent => "Persistent".to_string(),
-            ReasoningEffortConfig::Custom(value) => value.clone(),
+            ReasoningEffortConfig::Custom(value) => capitalized(value),
         }
     }
 
@@ -795,4 +796,13 @@ impl ChatWidget {
             action(&self.app_event_tx);
         }
     }
+}
+
+/// Hanzo: an effort's name as a label (`auto` is "Auto"), as upstream's built-in names read.
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }

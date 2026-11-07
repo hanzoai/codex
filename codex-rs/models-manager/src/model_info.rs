@@ -105,8 +105,21 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         slug: slug.to_string(),
         display_name: known.map_or_else(|| slug.to_string(), |model| model.name.to_string()),
         description: None,
-        default_reasoning_level: None,
-        supported_reasoning_levels: Vec::new(),
+        // Hanzo: a model Hanzo serves offers hanzo::effort's table and starts at its default.
+        default_reasoning_level: known.and_then(|_| hanzo::effort::DEFAULT.parse().ok()),
+        supported_reasoning_levels: if known.is_some() {
+            hanzo::effort::EFFORTS
+                .iter()
+                .filter_map(|(name, description)| {
+                    Some(codex_protocol::openai_models::ReasoningEffortPreset {
+                        effort: name.parse().ok()?,
+                        description: (*description).to_string(),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
         shell_type: ConfigShellToolType::UnifiedExec,
         visibility: ModelVisibility::None,
         supported_in_api: true,

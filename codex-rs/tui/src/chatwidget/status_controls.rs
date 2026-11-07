@@ -460,7 +460,7 @@ impl ChatWidget {
     ) -> String {
         match effort {
             None | Some(ReasoningEffortConfig::None) => "default".to_string(),
-            Some(effort) => effort.as_str().to_string(),
+            Some(effort) => hanzo::effort::shown(effort.as_str()).to_string(),
         }
     }
 }

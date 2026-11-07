@@ -1040,6 +1040,8 @@ impl ModelClient {
             raw_memories,
             reasoning: effort
                 .map(|effort| model_info.resolve_reasoning_effort(effort))
+                // Hanzo: `auto` is no effort; the router decides.
+                .filter(|effort| hanzo::effort::sent(effort.as_str()))
                 .map(|effort| Reasoning {
                     effort: Some(effort),
                     summary: None,
@@ -1146,7 +1148,9 @@ impl ModelClient {
         Reasoning {
             effort: effort
                 .or_else(|| model_info.default_reasoning_level.clone())
-                .map(|effort| model_info.resolve_reasoning_effort(effort)),
+                .map(|effort| model_info.resolve_reasoning_effort(effort))
+                // Hanzo: `auto` is no effort; the router decides.
+                .filter(|effort| hanzo::effort::sent(effort.as_str())),
             summary: (self.state.provider.capabilities().reasoning_summaries
                 && model_info.supports_reasoning_summary_parameter
                 && summary != ReasoningSummaryConfig::None)
