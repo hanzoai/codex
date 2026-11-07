@@ -568,6 +568,8 @@ pub(crate) async fn run_turn(
 
     let mut next_step_context = Some(first_step_context);
     let mut guardian_budget_compacted = false;
+    // Hanzo: a step that repeats the one before it, calls and results alike, ends the turn.
+    let mut repeat = super::cycle::Repeat::default();
     loop {
         // Note that pending_input would be something like a message the user
         // submitted through the UI while the model was running. Though the UI
@@ -671,6 +673,7 @@ pub(crate) async fn run_turn(
                 .clone_history()
                 .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
                 .await;
+            repeat.check(sampling_request_input.raw_items())?;
 
             run_sampling_request(
                 Arc::clone(&sess),
@@ -788,6 +791,7 @@ pub(crate) async fn run_turn(
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
                 if should_roll_over {
+                    repeat.reset();
                     let compacted = run_auto_compact(
                         &sess,
                         Arc::clone(&step_context),
@@ -957,6 +961,7 @@ pub(crate) async fn run_turn(
                 // token-budget resets must fail closed and retire the reviewer.
                 // Retry once per model step, so ineffective compaction cannot loop.
                 guardian_budget_compacted = true;
+                repeat.reset();
                 sess.services
                     .thread_extension_data
                     .insert(crate::guardian::ExhaustedReviewBudget::Compacting);

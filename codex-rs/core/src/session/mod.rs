@@ -254,6 +254,7 @@ pub(crate) use file_audio::FileAudioDurations;
 
 mod code_mode_warning;
 mod config_refresh;
+mod cycle;
 pub(crate) mod context_window;
 mod daemon_recovery;
 mod environment;
