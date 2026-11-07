@@ -76,7 +76,7 @@ pub(super) async fn checks(
 }
 
 #[cfg(any(target_os = "macos", test))]
-pub(super) const SYSTEM_PROXY_REMEDIATION: &str = "A macOS system proxy is configured but unused. If your organization requires it, ask your administrator whether to enable the experimental System proxy setting in `/experimental` or with `codex features enable respect_system_proxy`. Restart Codex after changing this setting.";
+pub(super) const SYSTEM_PROXY_REMEDIATION: &str = "A macOS system proxy is configured but unused. If your organization requires it, ask your administrator whether to enable the experimental System proxy setting in `/experimental` or with `dev features enable respect_system_proxy`. Restart Dev after changing this setting.";
 
 pub(super) fn check(config: Option<&Config>) -> DoctorCheck {
     let mut details = Vec::new();

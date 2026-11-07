@@ -147,7 +147,7 @@ impl WriterLockCoordinator {
                 Err(fs::TryLockError::WouldBlock) => {
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
-                        "timed out waiting for the thread writer coordination lock; another Codex process may be suspended on this or another host",
+                        "timed out waiting for the thread writer coordination lock; another Dev process may be suspended on this or another host",
                     ));
                 }
                 Err(fs::TryLockError::Error(err)) => return Err(err),

@@ -81,7 +81,7 @@ pub async fn resolve_ema_account_idp_identity<L: Send>(
 ) -> Result<EmaIdpIdentity<L>> {
     if refresh_token.trim().is_empty() {
         return Err(ema_reauthentication_required(
-            "Codex account has no refresh token; sign in again",
+            "Dev account has no refresh token; sign in again",
         ));
     }
     if idp.client_secret.is_some() && client_id != idp.client_id {

@@ -64,7 +64,7 @@ impl App {
 }
 
 #[cfg(target_os = "linux")]
-const NFS_MIGRATION_WARNING: &str = "Some Codex SQLite files on NFS have permissions other than 0600. Migration preserves these permissions and requires your confirmation. Before running `codex migrate-nfs-db`, stop Codex on every host that uses these databases.";
+const NFS_MIGRATION_WARNING: &str = "Some Dev SQLite files on NFS have permissions other than 0600. Migration preserves these permissions and requires your confirmation. Before running `dev migrate-nfs-db`, stop Dev on every host that uses these databases.";
 
 #[cfg(target_os = "linux")]
 pub(super) async fn warn_about_nfs_migration(

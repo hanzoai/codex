@@ -1623,7 +1623,7 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "respect_system_proxy",
         stage: Stage::Experimental {
             name: "System proxy",
-            menu_description: "Use macOS or Windows system proxy settings for Codex requests.",
+            menu_description: "Use macOS or Windows system proxy settings for Dev requests.",
             announcement: "",
         },
         default_enabled: false,

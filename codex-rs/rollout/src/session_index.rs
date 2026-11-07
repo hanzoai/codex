@@ -140,7 +140,7 @@ async fn with_session_index_lock(
                 Err(std::fs::TryLockError::WouldBlock) => {
                     return Err(std::io::Error::new(
                         ErrorKind::TimedOut,
-                        "timed out waiting for the session index lock; another Codex process may be suspended on this or another host",
+                        "timed out waiting for the session index lock; another Dev process may be suspended on this or another host",
                     ));
                 }
                 Err(std::fs::TryLockError::Error(err)) => return Err(err),

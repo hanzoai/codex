@@ -654,7 +654,7 @@ async fn load_config(
     .await?
     .build()
     .await
-    .context("failed to load Codex config")?;
+    .context("failed to load Dev config")?;
     config.config_layer_stack.ensure_config_server_applied()?;
     Ok(config)
 }

@@ -44,7 +44,7 @@ pub(super) async fn reconnect(
     presentation: ReconnectPresentation,
 ) -> Result<Reconnected> {
     if matches!(target, AppServerTarget::Cloud) {
-        color_eyre::eyre::bail!("Reopen Codex to reconnect the cloud backend.");
+        color_eyre::eyre::bail!("Reopen Dev to reconnect the cloud backend.");
     }
     let mode = target.thread_params_mode();
     if matches!(target, AppServerTarget::Embedded) {

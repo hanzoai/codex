@@ -74,7 +74,7 @@ impl Command for PostNotification<'_> {
         }
         let sequence = match self.protocol {
             OscProtocol::Osc9 => format!("\x1b]9;{body}\x07"),
-            OscProtocol::Osc777 => format!("\x1b]777;notify;Codex;{body}\x1b\\"),
+            OscProtocol::Osc777 => format!("\x1b]777;notify;Dev;{body}\x1b\\"),
         };
         if self.dcs_passthrough {
             let escaped = sequence.replace('\x1b', "\x1b\x1b");
@@ -133,7 +133,7 @@ mod tests {
             (OscProtocol::Osc9, format!("\x1b]9;{prefix}…\x07")),
             (
                 OscProtocol::Osc777,
-                format!("\x1b]777;notify;Codex;{prefix}…\x1b\\"),
+                format!("\x1b]777;notify;Dev;{prefix}…\x1b\\"),
             ),
         ] {
             let mut ansi = String::new();
@@ -202,8 +202,8 @@ mod tests {
         }
         insta::assert_debug_snapshot!(sequences, @r#"
         [
-            "\u{1b}]777;notify;Codex;Approval requested: cargo test； git clean   -fd\u{1b}\\",
-            "\u{1b}Ptmux;\u{1b}\u{1b}]777;notify;Codex;Approval requested: cargo test； git clean   -fd\u{1b}\u{1b}\\\u{1b}\\",
+            "\u{1b}]777;notify;Dev;Approval requested: cargo test； git clean   -fd\u{1b}\\",
+            "\u{1b}Ptmux;\u{1b}\u{1b}]777;notify;Dev;Approval requested: cargo test； git clean   -fd\u{1b}\u{1b}\\\u{1b}\\",
         ]
         "#);
     }

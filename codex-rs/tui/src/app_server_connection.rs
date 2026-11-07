@@ -17,7 +17,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 pub(crate) async fn connect(target: &AppServerTarget) -> color_eyre::Result<AppServerClient> {
     match target {
         AppServerTarget::Cloud => {
-            color_eyre::eyre::bail!("Reopen Codex to reconnect the cloud backend.");
+            color_eyre::eyre::bail!("Reopen Dev to reconnect the cloud backend.");
         }
         AppServerTarget::Embedded => {
             color_eyre::eyre::bail!("embedded sessions have no remote connection")

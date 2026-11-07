@@ -209,7 +209,7 @@ impl std::fmt::Display for EmaTokenSourceError {
                 ),
             ) => "Complete enterprise sign-in for this MCP server",
             (EmaCredentialKind::Account, Some(EmaAuthFailure::ReauthenticationRequired)) => {
-                "Sign in to your Codex account to restore enterprise MCP access"
+                "Sign in to your Dev account to restore enterprise MCP access"
             }
             (
                 EmaCredentialKind::Keyring,

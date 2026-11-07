@@ -420,7 +420,7 @@ impl LineageResolutionMode {
                 managed_rollout_path(store, &path).await.ok_or_else(|| {
                     ThreadStoreError::InvalidRequest {
                         message: format!(
-                            "rollout path `{}` must be in Codex home directory",
+                            "rollout path `{}` must be in Dev home directory",
                             path.display()
                         ),
                     }

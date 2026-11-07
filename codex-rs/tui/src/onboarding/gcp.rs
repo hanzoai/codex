@@ -71,7 +71,7 @@ impl GcpState {
                 Some((&self.location, "  Location (optional): ", "global")),
             ),
             GcpView::Credentials => (
-                "Enter an absolute file path on the host running Codex, or press Enter to use Application Default Credentials (ADC).",
+                "Enter an absolute file path on the host running Dev, or press Enter to use Application Default Credentials (ADC).",
                 Some((&self.credential_file, "  Credential file (optional): ", "")),
             ),
             GcpView::Configuring(_) => ("Validating credentials and saving configuration…", None),

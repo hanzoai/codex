@@ -40,7 +40,7 @@ pub(crate) async fn run(
         eprintln!("{warning}");
     }
     eprintln!(
-        "Stop all Codex instances on every host that uses these databases.\nKeep them stopped until the migration completes successfully."
+        "Stop all Dev instances on every host that uses these databases.\nKeep them stopped until the migration completes successfully."
     );
     let config = ConfigBuilder::default()
         .cli_overrides(
@@ -92,7 +92,7 @@ pub(crate) async fn run(
             continue;
         }
         let outcome = migration.migrate(&database.path, &command.staging_dir).await.with_context(|| format!(
-            "migration failed for {}. Keep all Codex instances stopped. Correct the error and rerun codex migrate-nfs-db",
+            "migration failed for {}. Keep all Dev instances stopped. Correct the error and rerun dev migrate-nfs-db",
             database.path.display()
         ))?;
         match outcome {
@@ -112,6 +112,6 @@ pub(crate) async fn run(
         println!("No databases found.");
         return Ok(());
     }
-    println!("Migration completed successfully. You can restart Codex.");
+    println!("Migration completed successfully. You can restart Dev.");
     Ok(())
 }

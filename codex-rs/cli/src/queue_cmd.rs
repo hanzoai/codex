@@ -90,17 +90,17 @@ pub(super) fn validate_options(command: &Command, root: &ArgMatches) -> Result<(
         };
         let message = match arg.get_long() {
             Some("cd") if remote.is_none() => continue,
-            Some("cd") => "`codex queue` does not support `--cd` with `--remote`".to_string(),
+            Some("cd") => "`dev queue` does not support `--cd` with `--remote`".to_string(),
             // These flags already have dedicated diagnostics in the CLI and session startup.
             Some("worktree" | "no-daemon") => continue,
             Some("model") => {
-                "`codex queue` does not support `--model`; queued messages use the thread's model"
+                "`dev queue` does not support `--model`; queued messages use the thread's model"
                     .to_string()
             }
-            Some("image") => "`codex queue` does not support image attachments".to_string(),
-            Some(name) => format!("`codex queue` does not support `--{name}`"),
+            Some("image") => "`dev queue` does not support image attachments".to_string(),
+            Some(name) => format!("`dev queue` does not support `--{name}`"),
             None => {
-                "`codex queue` does not accept a positional prompt; use `--message`".to_string()
+                "`dev queue` does not accept a positional prompt; use `--message`".to_string()
             }
         };
         return Err(clap::Error::raw(ErrorKind::ArgumentConflict, message));

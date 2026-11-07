@@ -101,14 +101,14 @@ pub(crate) fn account_configuration_issue(
             .is_some_and(|provenance| provenance.issuer == idp.issuer)
             || account_oidc_issuer_hint(&tokens.id_token.raw_jwt, &idp.issuer))
     {
-        return Some("Sign in to your Codex account again to enable this enterprise MCP server");
+        return Some("Sign in to your Dev account again to enable this enterprise MCP server");
     }
     if tokens.oauth_provenance.as_ref().is_some_and(|provenance| {
         provenance.issuer != idp.issuer
             && provenance.issuer.trim_end_matches('/') == idp.issuer.trim_end_matches('/')
     }) {
         return Some(
-            "Codex sign-in and enterprise MCP issuer strings differ by a trailing slash; align their OIDC issuer configuration",
+            "Dev sign-in and enterprise MCP issuer strings differ by a trailing slash; align their OIDC issuer configuration",
         );
     }
     None

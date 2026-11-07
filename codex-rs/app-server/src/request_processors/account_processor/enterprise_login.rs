@@ -202,7 +202,7 @@ impl EnterpriseLoginState {
             .auth_manager
             .auth_cached()
             .filter(|auth| ema_auth_scope(Some(auth)).as_ref() == Some(&scope))
-            .ok_or_else(|| internal_error("Codex account changed during enterprise sign-in"))?;
+            .ok_or_else(|| internal_error("Dev account changed during enterprise sign-in"))?;
         if !self
             .auth_manager
             .account_login_is_current(&account)
@@ -210,7 +210,7 @@ impl EnterpriseLoginState {
             .unwrap_or(false)
         {
             return Err(internal_error(
-                "Codex account changed during enterprise sign-in",
+                "Dev account changed during enterprise sign-in",
             ));
         }
         let keyring_backend = request.keyring_backend_kind;

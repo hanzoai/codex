@@ -190,7 +190,7 @@ impl GatewayOAuthConfig {
             && validate_endpoint_url(catalog, "model_catalog_url")?.origin() != gateway.origin()
         {
             return Err(
-                "Codex would send gateway credentials to a different model catalog. Set model_catalog_url \
+                "Dev would send gateway credentials to a different model catalog. Set model_catalog_url \
                  to a URL with the same scheme, host, and port as base_url, or remove model_catalog_url \
                  to use the gateway's catalog."
                     .into(),
@@ -206,7 +206,7 @@ impl GatewayOAuthConfig {
                 || provider.has_command_auth()
             {
                 return Err(
-                    "Header conflict. Codex is configured to send both the model provider credential \
+                    "Header conflict. Dev is configured to send both the model provider credential \
                      and the gateway token in the Authorization header. Set gateway_oauth.delivery \
                      to a different header or cookie that your gateway accepts for its token."
                         .into(),
