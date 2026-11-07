@@ -254,8 +254,8 @@ pub(crate) use file_audio::FileAudioDurations;
 
 mod code_mode_warning;
 mod config_refresh;
-mod cycle;
 pub(crate) mod context_window;
+mod cycle;
 mod daemon_recovery;
 mod environment;
 mod extension_interruption;
@@ -5921,6 +5921,21 @@ impl Session {
             message: message.into(),
             codex_error_info: Some(codex_error_info),
             additional_details: Some(additional_details),
+        });
+        self.send_event(turn_context, event).await;
+    }
+
+    /// Hanzo: a wait the turn will retry after (a rate limit, an overload), shown as the
+    /// turn's status. It carries no error, so nothing shows the status code that caused it.
+    pub(crate) async fn notify_retry_wait(
+        &self,
+        turn_context: &TurnContext,
+        message: impl Into<String>,
+    ) {
+        let event = EventMsg::StreamError(StreamErrorEvent {
+            message: message.into(),
+            codex_error_info: None,
+            additional_details: None,
         });
         self.send_event(turn_context, event).await;
     }

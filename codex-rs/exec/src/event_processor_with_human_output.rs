@@ -250,6 +250,11 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 eprintln!("{}", notification.message.style(self.green));
                 CodexStatus::Running
             }
+            // Hanzo: a retried request is a wait the turn goes on after, not an error.
+            ServerNotification::Error(notification) if notification.will_retry => {
+                eprintln!("{}", notification.error.message.style(self.dimmed));
+                CodexStatus::Running
+            }
             ServerNotification::Error(notification) => {
                 eprintln!(
                     "{} {}",

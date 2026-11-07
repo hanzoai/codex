@@ -30,6 +30,7 @@ regex-lite = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 url = { workspace = true }
 uuid = { workspace = true }
+hanzo = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }

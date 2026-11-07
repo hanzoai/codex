@@ -31,6 +31,10 @@ pub enum ThreadEvent {
     /// Signals that an item has reached a terminal state—either success or failure.
     #[serde(rename = "item.completed")]
     ItemCompleted(ItemCompletedEvent),
+    /// Hanzo: the turn is waiting to retry a request (a rate limit, an overload, a lost
+    /// connection) and goes on by itself afterwards. It is not an error.
+    #[serde(rename = "turn.waiting")]
+    TurnWaiting(TurnWaitingEvent),
     /// Represents an unrecoverable error emitted directly by the event stream.
     #[serde(rename = "error")]
     Error(ThreadErrorEvent),
@@ -90,6 +94,12 @@ pub struct ItemUpdatedEvent {
 /// Fatal error emitted by the stream.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct ThreadErrorEvent {
+    pub message: String,
+}
+
+/// What the turn is waiting for, e.g. "waiting for rate limit, retrying in 12s".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+pub struct TurnWaitingEvent {
     pub message: String,
 }
 

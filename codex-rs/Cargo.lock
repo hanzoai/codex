@@ -2063,6 +2063,7 @@ dependencies = [
  "codex-websocket-client",
  "eventsource-stream",
  "futures",
+ "hanzo",
  "http 1.4.0",
  "pretty_assertions",
  "rcgen",

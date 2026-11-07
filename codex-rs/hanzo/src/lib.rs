@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod controller;
 pub mod logo;
 pub mod model;
+pub mod pace;
 pub mod version;
 
 pub const PRODUCT_NAME: &str = "Hanzo Dev";

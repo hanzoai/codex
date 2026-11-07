@@ -54,6 +54,7 @@ use crate::exec_events::TodoListItem;
 use crate::exec_events::TurnCompletedEvent;
 use crate::exec_events::TurnFailedEvent;
 use crate::exec_events::TurnStartedEvent;
+use crate::exec_events::TurnWaitingEvent;
 use crate::exec_events::Usage;
 use crate::exec_events::WebSearchItem;
 
@@ -446,6 +447,13 @@ impl EventProcessorWithJsonOutput {
                 let warning = self.collect_warning(notification.message);
                 events.extend(warning.events);
                 warning.status
+            }
+            // Hanzo: a retried request is a wait the turn goes on after, not an error.
+            ServerNotification::Error(notification) if notification.will_retry => {
+                events.push(ThreadEvent::TurnWaiting(TurnWaitingEvent {
+                    message: notification.error.message,
+                }));
+                CodexStatus::Running
             }
             ServerNotification::Error(notification) => {
                 let message = match notification.error.additional_details {

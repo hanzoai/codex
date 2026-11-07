@@ -72,6 +72,12 @@ export type ThreadErrorEvent = {
   message: string;
 };
 
+/** The turn is waiting to retry a request (a rate limit, an overload, a lost connection) and goes on by itself. Not an error. */
+export type TurnWaitingEvent = {
+  type: "turn.waiting";
+  message: string;
+};
+
 /** Top-level JSONL events emitted by codex exec. */
 export type ThreadEvent =
   | ThreadStartedEvent
@@ -81,4 +87,5 @@ export type ThreadEvent =
   | ItemStartedEvent
   | ItemUpdatedEvent
   | ItemCompletedEvent
+  | TurnWaitingEvent
   | ThreadErrorEvent;

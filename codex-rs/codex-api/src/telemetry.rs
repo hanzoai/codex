@@ -44,6 +44,7 @@ pub trait WebsocketTelemetry: Send + Sync {
 
 pub(crate) trait WithStatus {
     fn status(&self) -> StatusCode;
+    fn headers(&self) -> &http::HeaderMap;
 }
 
 fn http_status(err: &TransportError) -> Option<StatusCode> {
@@ -57,12 +58,25 @@ impl WithStatus for Response {
     fn status(&self) -> StatusCode {
         self.status
     }
+    fn headers(&self) -> &http::HeaderMap {
+        &self.headers
+    }
 }
 
 impl WithStatus for StreamResponse {
     fn status(&self) -> StatusCode {
         self.status
     }
+    fn headers(&self) -> &http::HeaderMap {
+        &self.headers
+    }
+}
+
+/// Hanzo: a provider's rate-limit headers pace the requests that follow (`hanzo::pace`).
+fn observe(url: &str, status: StatusCode, headers: &http::HeaderMap) {
+    hanzo::pace::observe(url, status.as_u16(), |name| {
+        headers.get(name).and_then(|value| value.to_str().ok())
+    });
 }
 
 pub(crate) async fn run_with_request_telemetry<T, F, Fut>(
@@ -82,8 +96,23 @@ where
         let telemetry = telemetry.clone();
         let send = send.clone();
         async move {
+            // Hanzo: wait out what the provider said is spent, then learn from its answer.
+            let url = req.url.clone();
+            let wait = hanzo::pace::delay(&url);
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+            }
             let start = Instant::now();
             let result = send(req).await;
+            match &result {
+                Ok(resp) => observe(&url, resp.status(), resp.headers()),
+                Err(TransportError::Http {
+                    status,
+                    headers: Some(headers),
+                    ..
+                }) => observe(&url, *status, headers),
+                Err(_) => {}
+            }
             if let Some(t) = telemetry.as_ref() {
                 let (status, err) = match &result {
                     Ok(resp) => (Some(resp.status()), None),
