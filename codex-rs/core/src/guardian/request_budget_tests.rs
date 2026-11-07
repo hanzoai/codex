@@ -18,7 +18,7 @@ async fn request_histogram_counts_admitted_steps_without_counting_retry_preparat
         MetricsConfig::in_memory(
             "test",
             "codex-core",
-            env!("CARGO_PKG_VERSION"),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

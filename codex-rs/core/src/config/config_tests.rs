@@ -14251,7 +14251,7 @@ metrics_exporter = { otlp-http = { endpoint = "http://127.0.0.1:1/v1/metrics", p
     assert!(
         crate::otel_init::build_provider(
             &config,
-            env!("CARGO_PKG_VERSION"),
+            hanzo::version::get(),
             /*service_name_override*/ None,
             /*default_analytics_enabled*/ true,
         )

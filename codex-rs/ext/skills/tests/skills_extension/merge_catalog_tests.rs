@@ -1343,7 +1343,7 @@ async fn v2_shadow_observation_tracks_merged_skills_independently_of_read_route(
             MetricsConfig::in_memory(
                 "test",
                 "codex-skills-extension",
-                env!("CARGO_PKG_VERSION"),
+                hanzo::version::get(),
                 InMemoryMetricExporter::default(),
             )
             .with_runtime_reader(),

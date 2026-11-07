@@ -294,7 +294,7 @@ fn print_startup_config_validates_configuration() -> Result<()> {
             assert!(value.get("configRequirements").is_none());
         } else {
             output.success();
-            assert_eq!(value["appServerVersion"], env!("CARGO_PKG_VERSION"));
+            assert_eq!(value["appServerVersion"], hanzo::version::get());
             assert!(value["configRequirements"].get("requirements").is_some());
             assert!(value.get("config").is_none());
         }

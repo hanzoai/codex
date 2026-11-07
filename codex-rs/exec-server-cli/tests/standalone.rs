@@ -140,7 +140,7 @@ async fn standalone_initializes_reports_version_and_runs_helpers() -> anyhow::Re
     assert!(version.status.success(), "{version:?}");
     assert_eq!(
         String::from_utf8(version.stdout)?,
-        format!("codex-exec-server {}\n", env!("CARGO_PKG_VERSION"))
+        format!("codex-exec-server {}\n", hanzo::version::get())
     );
 
     // The unsandboxed case also runs on Windows. Unix additionally verifies that
@@ -194,7 +194,7 @@ async fn standalone_initializes_reports_version_and_runs_helpers() -> anyhow::Re
         assert_eq!(response["id"], 1);
         assert!(response["result"]["sessionId"].is_string(), "{response}");
         let environment = response["result"]["environmentInfo"].clone();
-        assert_eq!(environment["executorVersion"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(environment["executorVersion"], hanzo::version::get());
         let initialized = json!({"method": "initialized", "params": {}});
         let info = json!({"id": 2, "method": "environment/info", "params": {}});
         stdin

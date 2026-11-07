@@ -58,3 +58,4 @@ pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "process"] }
 wiremock = { workspace = true }
+hanzo = { workspace = true }

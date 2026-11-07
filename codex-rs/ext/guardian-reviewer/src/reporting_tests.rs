@@ -37,7 +37,7 @@ fn review_completion_uses_one_monotonic_duration(
     let has_client_event = action.is_some();
     let exporter = InMemoryMetricExporter::default();
     let metrics = MetricsClient::new(
-        MetricsConfig::in_memory("test", "codex-core", env!("CARGO_PKG_VERSION"), exporter)
+        MetricsConfig::in_memory("test", "codex-core", hanzo::version::get(), exporter)
             .with_runtime_reader(),
     )
     .expect("in-memory metrics client");

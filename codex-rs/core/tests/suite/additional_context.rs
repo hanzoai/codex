@@ -1035,7 +1035,7 @@ async fn additional_context_metrics_record_submitted_sizes_and_truncation(
         MetricsConfig::in_memory(
             "test",
             "additional-context",
-            env!("CARGO_PKG_VERSION"),
+            hanzo::version::get(),
             InMemoryMetricExporter::default(),
         )
         .with_runtime_reader(),

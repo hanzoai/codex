@@ -45,7 +45,7 @@ pub(crate) fn runtime_for_config(
                     config.chatgpt_base_url.clone(),
                     RuntimeRegistrationMetadata {
                         harness: Some("codex".to_string()),
-                        harness_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                        harness_version: Some(hanzo::version::get().to_string()),
                         role: RuntimeRole::Orchestrator,
                     },
                 ))
