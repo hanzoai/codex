@@ -60,7 +60,7 @@ impl Session {
     pub(crate) async fn prepare_mcp_call(
         self: &Arc<Self>,
         advertised_tool: &ToolInfo,
-    ) -> Option<PreparedMcpCall> {
+    ) -> anyhow::Result<PreparedMcpCall> {
         self.refresh_mcp_if_dirty().await;
         self.services
             .mcp_runtime
@@ -379,7 +379,13 @@ impl Session {
                     )
                 }),
             startup_policy: if matches!(desired.session_source, SessionSource::SubAgent(_)) {
-                McpStartupPolicy::LazyWhenCached
+                McpStartupPolicy::DeferCachedServers
+            } else if desired
+                .config
+                .features
+                .enabled(Feature::McpLazyStdioStartup)
+            {
+                McpStartupPolicy::DeferCachedStdio
             } else {
                 McpStartupPolicy::Eager
             },

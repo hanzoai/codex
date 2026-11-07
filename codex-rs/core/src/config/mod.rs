@@ -210,6 +210,8 @@ pub use network_config::NetworkConfigInputs;
 pub use network_config::PreparedNetworkConfig;
 pub use network_config::project_environment_profile_network;
 pub use network_config::validate_environment_network_policy;
+#[cfg(test)]
+pub(crate) use network_proxy_spec::McpNetworkRoute;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
 pub use permission_profile_catalog::PermissionProfileCatalogEntry;
@@ -1613,7 +1615,11 @@ impl ConfigBuilder {
         let cli_overrides = cli_overrides.unwrap_or_default();
         let mut harness_overrides = harness_overrides.unwrap_or_default();
         let loader_overrides = loader_overrides.unwrap_or_default();
-        let cwd_override = harness_overrides.cwd.as_deref().or(fallback_cwd.as_deref());
+        let cwd_override = harness_overrides
+            .cwd
+            .as_deref()
+            .or(fallback_cwd.as_deref())
+            .or(loader_overrides.default_cwd.as_deref());
         let cwd = match cwd_override {
             Some(path) => AbsolutePathBuf::relative_to_current_dir(path)?,
             None => AbsolutePathBuf::current_dir()?,
@@ -3619,6 +3625,9 @@ impl Config {
         {
             configured_features.enable(Feature::Collab);
         }
+        let runtime_auth_mode = managed_features::resolve_runtime_auth_mode(
+            &cfg, feature_requirements.as_ref(),
+        )?;
         let features = ManagedFeatures::from_configured_with_warnings(
             configured_features,
             feature_requirements,
@@ -4082,15 +4091,6 @@ impl Config {
             .features
             .as_ref()
             .and_then(|features| features.sleep_tool.as_ref())
-            .and_then(|feature| match feature {
-                FeatureToml::Enabled(_) => None,
-                FeatureToml::Config(config) => config.mode,
-            })
-            .unwrap_or_default();
-        let runtime_auth_mode = cfg
-            .features
-            .as_ref()
-            .and_then(|features| features.runtime_agent_instances.as_ref())
             .and_then(|feature| match feature {
                 FeatureToml::Enabled(_) => None,
                 FeatureToml::Config(config) => config.mode,
@@ -5349,3 +5349,7 @@ mod tests;
 #[cfg(test)]
 #[path = "config_loader_tests.rs"]
 mod config_loader_tests;
+
+#[cfg(test)]
+#[path = "runtime_auth_tests.rs"]
+mod runtime_auth_tests;

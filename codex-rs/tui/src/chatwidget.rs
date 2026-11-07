@@ -305,6 +305,7 @@ mod session_flow;
 mod session_header;
 use self::session_header::SessionHeader;
 mod clipboard;
+pub(crate) use clipboard::ClipboardPasteContext;
 mod copy_picker;
 mod hook_lifecycle;
 mod hooks;
@@ -642,7 +643,7 @@ pub(crate) struct ChatWidget {
     /// executing.
     mcp_startup_status: Option<HashMap<String, McpStartupStatus>>,
     /// Expected MCP servers for the current startup round, seeded from enabled local config.
-    mcp_startup_expected_servers: Option<HashSet<String>>,
+    mcp_startup_expected_servers: Option<mcp_startup::ExpectedMcpServers>,
     /// After startup settles, ignore stale updates until enough notifications confirm a new round.
     mcp_startup_ignore_updates_until_next_start: bool,
     /// A lag signal for the next round means terminal-only updates are enough to settle it.

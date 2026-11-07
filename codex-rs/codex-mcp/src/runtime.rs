@@ -76,8 +76,10 @@ use crate::tools::ToolInfo;
 pub enum McpStartupPolicy {
     /// Start configured servers when their task's MCP runtime is published.
     Eager,
-    /// Start servers with cached tool definitions on first use.
-    LazyWhenCached,
+    /// Defer cached stdio servers unless startup requires their live connection.
+    DeferCachedStdio,
+    /// Allow cached tools to satisfy startup for any eligible transport, including required servers.
+    DeferCachedServers,
 }
 
 /// A host-requested tool result and its identity in the published MCP catalog.
@@ -649,11 +651,19 @@ impl McpRuntime {
 
     /// Prepares one advertised tool against this publication's current client and policy.
     /// Its model-visible name stays fixed while execution metadata comes from the live catalog.
-    pub async fn prepare_call(&self, advertised_tool: &ToolInfo) -> Option<PreparedMcpCall> {
+    /// A failed connection returns its startup error even if the cache advertised the tool.
+    pub async fn prepare_call(
+        &self,
+        advertised_tool: &ToolInfo,
+    ) -> anyhow::Result<PreparedMcpCall> {
         let current = self.current.load_full();
+        let config = current
+            .config
+            .as_ref()
+            .ok_or_else(|| advertised_tool.unavailable_to_model_error())?;
         current
             .connections
-            .prepare_call_for_tool(Arc::clone(current.config.as_ref()?), advertised_tool)
+            .prepare_call_for_tool(Arc::clone(config), advertised_tool)
             .await
     }
 

@@ -2235,6 +2235,7 @@ respect_system_proxy = true
     let disabled = Sourced::new(
         FeatureRequirementsToml {
             entries: BTreeMap::from([("respect_system_proxy".to_string(), false)]),
+            ..Default::default()
         },
         RequirementSource::Unknown,
     );
@@ -2257,6 +2258,7 @@ respect_system_proxy = true
     let enabled = Sourced::new(
         FeatureRequirementsToml {
             entries: BTreeMap::from([("respect_system_proxy".to_string(), true)]),
+            ..Default::default()
         },
         RequirementSource::Unknown,
     );
@@ -2358,6 +2360,7 @@ async fn system_proxy_fallback_honors_feature_requirements() -> std::io::Result<
         let requirements = Sourced::new(
             FeatureRequirementsToml {
                 entries: BTreeMap::from([("system_proxy_fallback".to_string(), required)]),
+                ..Default::default()
             },
             RequirementSource::Unknown,
         );
@@ -12456,6 +12459,7 @@ fn retired_feature_requirements_do_not_pin_configured_values(
                     (key.to_string(), required),
                     ("shell_tool".to_string(), false),
                 ]),
+                ..Default::default()
             },
             RequirementSource::EnterpriseManaged {
                 id: "enterprise-id".to_string(),

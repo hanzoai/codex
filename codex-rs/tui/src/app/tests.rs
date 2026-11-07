@@ -96,6 +96,8 @@ mod resume_shutdown_tests;
 mod safety_buffering;
 #[path = "tests/session_lifecycle_requests.rs"]
 mod session_lifecycle_requests;
+#[path = "tests/side_chat_policy_tests.rs"]
+mod side_chat_policy_tests;
 mod startup;
 #[path = "tests/startup_frame_tests.rs"]
 mod startup_frame_tests;
@@ -2246,9 +2248,8 @@ async fn token_usage_update_refreshes_status_line_with_runtime_context_window() 
             token_usage_notification(thread_id, "turn-1", Some(window)),
         )));
         assert!(matches!(
-            (extensions, app.chat_widget.status_line_content()),
-            (false, Some(FooterContent::HyperlinkLine(_)))
-                | (true, Some(FooterContent::Extension { .. }))
+            app.chat_widget.status_line_content(),
+            Some(FooterContent::HyperlinkLine(_))
         ));
         let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 60);
         assert!(
@@ -7213,17 +7214,26 @@ async fn app_scoped_mcp_startup_notifications_do_not_render_in_active_thread() {
 async fn active_side_thread_renders_live_mcp_startup_notifications() {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     while app_event_rx.try_recv().is_ok() {}
-    let sentry_config = toml::from_str::<toml::Value>("command = 'true'")
-        .expect("test MCP config should parse")
-        .try_into()
-        .expect("test MCP config should deserialize");
+    app.config
+        .features
+        .enable(Feature::McpLazyStdioStartup)
+        .unwrap();
     app.config
         .mcp_servers
-        .set(std::collections::HashMap::from([(
-            "sentry".to_string(),
-            sentry_config,
-        )]))
-        .expect("test MCP servers should accept any configuration");
+        .set(
+            toml::from_str(
+                r#"
+        [first]
+        command = "first"
+        required = true
+        [second]
+        command = "second"
+        required = true
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
         .await
         .expect("embedded app server");
@@ -7250,16 +7260,21 @@ async fn active_side_thread_renders_live_mcp_startup_notifications() {
     );
     app.sync_side_thread_ui();
 
-    for status in [
-        McpServerStartupState::Starting,
-        McpServerStartupState::Failed,
+    // The plugin contributes sentry, so it is absent from the explicit server list.
+    for (name, status, busy) in [
+        ("first", McpServerStartupState::Starting, true),
+        ("first", McpServerStartupState::Ready, true),
+        ("second", McpServerStartupState::Starting, true),
+        ("second", McpServerStartupState::Ready, false),
+        ("sentry", McpServerStartupState::Starting, true),
+        ("sentry", McpServerStartupState::Failed, false),
     ] {
         app.handle_app_server_event(
             &app_server,
             codex_app_server_client::AppServerEvent::ServerNotification(Box::new(
                 ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
                     thread_id: Some(side_thread_id.to_string()),
-                    name: "sentry".to_string(),
+                    name: name.to_string(),
                     status,
                     error: matches!(status, McpServerStartupState::Failed)
                         .then(|| "sentry is not logged in".to_string()),
@@ -7268,18 +7283,18 @@ async fn active_side_thread_renders_live_mcp_startup_notifications() {
             )),
         )
         .await;
-    }
-
-    let mut active_thread_events = Vec::new();
-    let active_thread_rx = app
-        .active_thread_rx
-        .as_mut()
-        .expect("side thread receiver should be active");
-    while let Ok(event) = active_thread_rx.try_recv() {
-        active_thread_events.push(event);
-    }
-    for event in active_thread_events {
+        let event = app
+            .active_thread_rx
+            .as_mut()
+            .expect("side thread receiver")
+            .try_recv()
+            .expect("startup notification");
         app.handle_thread_event_now(event);
+        assert_eq!(
+            app.chat_widget.is_task_running_for_test(),
+            busy,
+            "{name} {status:?}"
+        );
     }
 
     let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");

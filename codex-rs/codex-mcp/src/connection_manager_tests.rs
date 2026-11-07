@@ -2843,6 +2843,9 @@ async fn tool_catalog_cache_sanitizes_tools_and_tracks_environment_generation() 
 
     let older = first_context.begin_fetch();
     let newer = first_context.begin_fetch();
+    let mut discovery = first_context.clone();
+    discovery.before_stdio_discovery = true;
+    discovery.record_modern_stdio_discovery(&discovery.begin_fetch());
     first_context.publish_if_newest(
         newer,
         &[create_test_tool("docs", "new")],
@@ -2856,6 +2859,10 @@ async fn tool_catalog_cache_sanitizes_tools_and_tracks_environment_generation() 
     assert_eq!(
         first_context.current_tools().expect("cached tools")[0].callable_name,
         "new"
+    );
+    assert!(
+        !discovery.has_tools(),
+        "older legacy fetches cannot undo modern discovery"
     );
 
     tokio::time::advance(Duration::from_secs(30 * 60 + 1)).await;
@@ -4505,7 +4512,7 @@ async fn later_tool_list_retries_after_failed_reconnect_and_keeps_cached_tools()
                 &failed_binding.tools()[0],
             )
             .await
-            .is_none()
+            .is_err()
     );
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
 
@@ -4648,7 +4655,7 @@ async fn tool_lists_do_not_block_and_share_codex_apps_startup_reconnect() {
         manager
             .prepare_call_for_tool(Arc::clone(pending_step.config()), &pending_step.tools()[0])
             .await
-            .is_some()
+            .is_ok()
     );
     let tools = manager.list_all_tools().await;
     assert_eq!(
@@ -6166,7 +6173,7 @@ async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> a
         reconciled
             .prepare_call_for_tool(Arc::clone(old_step.config()), &old_step.tools()[0],)
             .await
-            .is_none()
+            .is_err()
     );
     let refreshed = previous.test_client("docs").client().await?;
     assert_eq!(

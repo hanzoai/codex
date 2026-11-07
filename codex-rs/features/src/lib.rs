@@ -128,7 +128,7 @@ pub enum Feature {
     TuiMultiBackend,
     /// Enable workspace behavior for side conversations in the owned TUI.
     TuiWorkspace,
-    /// Render the configured status line through the experimental TUI Extensions renderer.
+    /// Enable experimental MCP status line providers.
     TuiExtensionsStatusLine,
     /// Enable negotiated zstd compression for app-server WebSocket and UDS connections.
     AppServerWebSocketCompression,
@@ -286,6 +286,8 @@ pub enum Feature {
     McpToolListChanged,
     /// Discover and share eligible local stdio connections across chats.
     McpConnectionSharing,
+    /// Defer optional stdio server startup in regular chats with a warm tool catalog.
+    McpLazyStdioStartup,
     /// Enable MCP protocol version 2026-07-28 for the host-owned Codex Apps server.
     CodexAppsMcp20260728,
     /// Let host-owned Apps catalog reads overlap the initial tool inventory.
@@ -306,7 +308,7 @@ pub enum Feature {
     CommandSessionsWorldState,
     /// Track top-level tool definitions in world state and emit incremental context updates.
     IncrementalTools,
-    /// Publish incremental tool declarations on regular OpenAI Responses.
+    /// Publish incremental tool declarations on regular Amazon Bedrock Responses.
     IncrementalToolsLegacy,
     /// Suppress the model ID announcement in incremental context after a model switch.
     SuppressModelChangeAnnouncements,
@@ -1739,6 +1741,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::McpConnectionSharing,
         key: "mcp_connection_sharing",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::McpLazyStdioStartup,
+        key: "mcp_lazy_stdio_startup",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },

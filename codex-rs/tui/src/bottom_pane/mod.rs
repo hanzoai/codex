@@ -93,7 +93,6 @@ pub(crate) use multi_select_picker::MultiSelectPicker;
 mod question_tests;
 mod questions;
 mod request_user_input;
-pub(crate) mod status_line_content;
 mod status_line_setup;
 mod status_line_style;
 mod status_surface_preview;
@@ -124,7 +123,7 @@ pub(crate) use footer::footer_content;
 pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
 pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
 pub(crate) use request_user_input::RequestUserInputOverlay;
-pub(crate) use status_line_style::STATUS_LINE_SEPARATOR;
+pub(crate) use status_line_style::StatusLineAccent;
 pub(crate) use status_line_style::status_line_from_segments;
 pub(crate) use voice_strip::VoiceStripPhase;
 pub(crate) use voice_strip::VoiceStripState;
@@ -871,6 +870,14 @@ impl BottomPane {
         key: KeyEvent,
         mode: RestrictedInputMode,
     ) -> InputResult {
+        if mode == RestrictedInputMode::DraftHandoff {
+            let result = self.composer.handle_restricted_key(key, mode);
+            if Self::is_composer_activity_key(key) {
+                self.record_composer_activity_at(Instant::now());
+            }
+            self.request_redraw();
+            return result;
+        }
         self.view_stack.clear();
         self.warnings_view = None;
         self.delayed_approval_requests.clear();
@@ -2384,6 +2391,12 @@ impl BottomPane {
     pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.composer.on_file_search_result(query, matches);
         self.request_redraw();
+    }
+
+    /// Settle typing before an accepted handoff image without starting shell mode.
+    pub(crate) fn settle_before_handoff_image(&mut self) {
+        self.composer
+            .flush_pending_input_with_shell_prefix(ShellPrefixHandling::Literal);
     }
 
     pub(crate) fn attach_image(&mut self, path: PathBuf) {
