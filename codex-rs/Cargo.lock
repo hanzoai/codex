@@ -4915,6 +4915,7 @@ dependencies = [
  "codex-utils-redacted-string",
  "ed25519-dalek",
  "futures",
+ "hanzo",
  "http 1.4.0",
  "pretty_assertions",
  "rand 0.9.3",

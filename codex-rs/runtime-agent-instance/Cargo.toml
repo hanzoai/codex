@@ -20,6 +20,7 @@ codex-login = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-redacted-string = { workspace = true }
 ed25519-dalek = { workspace = true }
+hanzo = { workspace = true }
 http = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
