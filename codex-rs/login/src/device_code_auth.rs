@@ -149,7 +149,7 @@ async fn poll_for_token(
 fn device_code_prompt(verification_url: &str, code: &str) -> String {
     let version = hanzo::version::get();
     format!(
-        "\nWelcome to Hanzo Dev [v{ANSI_GRAY}{version}{ANSI_RESET}]\n{ANSI_GRAY}your Hanzo coding agent{ANSI_RESET}\n\
+        "\nWelcome to Hanzo [v{ANSI_GRAY}{version}{ANSI_RESET}]\n{ANSI_GRAY}your Hanzo coding agent{ANSI_RESET}\n\
 \nFollow these steps to sign in with ChatGPT using device code authorization:\n\
 \n1. Open this link in your browser and sign in to your account\n   {ANSI_BLUE}{verification_url}{ANSI_RESET}\n\
 \n2. Enter this one-time code {ANSI_GRAY}(expires in 15 minutes){ANSI_RESET}\n   {ANSI_BLUE}{code}{ANSI_RESET}\n\

@@ -73,7 +73,9 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
     built_in_slash_commands()
         .into_iter()
         .filter(|(_, cmd)| flags.allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
-        .filter(|(_, cmd)| flags.collaboration_modes_enabled || *cmd != SlashCommand::Plan)
+        .filter(|(_, cmd)| {
+            flags.collaboration_modes_enabled || !matches!(cmd, SlashCommand::Plan | SlashCommand::Build)
+        })
         .filter(|(_, cmd)| flags.connectors_enabled || *cmd != SlashCommand::Apps)
         .filter(|(_, cmd)| flags.plugins_command_enabled || *cmd != SlashCommand::Plugins)
         .filter(|(_, cmd)| flags.token_activity_command_enabled || *cmd != SlashCommand::Usage)

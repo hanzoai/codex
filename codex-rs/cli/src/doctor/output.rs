@@ -79,7 +79,7 @@ pub(super) fn render_human_report(report: &DoctorReport, options: HumanOutputOpt
     let _ = writeln!(
         out,
         "{} {}",
-        bold("Hanzo Dev Doctor", options),
+        bold("Hanzo Doctor", options),
         dim(&header_suffix(report), options)
     );
     out.push('\n');
@@ -1354,7 +1354,7 @@ mod tests {
         let rendered = render_human_report(&sample_report(), detailed_no_color_unicode_options());
         let expected = format!(
             "\
-Hanzo Dev Doctor v0.0.0
+Hanzo Doctor v0.0.0
 
 Notes
    ⚠ terminal     narrow terminal
@@ -1498,7 +1498,7 @@ Background Server
         let rendered = render_human_report(&sample_report(), summary_no_color_unicode_options());
         let expected = format!(
             "\
-Hanzo Dev Doctor v0.0.0
+Hanzo Doctor v0.0.0
 
 Notes
    ⚠ terminal     narrow terminal
@@ -1606,7 +1606,7 @@ Run dev doctor without --summary for detailed diagnostics.
         );
         let expected = format!(
             "\
-Hanzo Dev Doctor v0.0.0
+Hanzo Doctor v0.0.0
 
 Notes
    [!!] terminal     narrow terminal

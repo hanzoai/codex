@@ -13,8 +13,8 @@ pub mod model;
 pub mod pace;
 pub mod version;
 
-pub const PRODUCT_NAME: &str = "Hanzo Dev";
-pub const INPUT_PLACEHOLDER: &str = "Ask Hanzo Dev to do anything";
+pub const PRODUCT_NAME: &str = "Hanzo";
+pub const INPUT_PLACEHOLDER: &str = "Ask Hanzo to do anything";
 pub const STARTUP_TIP: &str = "Use **/mcp** to inspect connected tools. Hanzo MCP provides cloud controls and local development tools.";
 
 /// Dev checks its own latest release at startup and offers the way it was installed
