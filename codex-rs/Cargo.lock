@@ -2337,6 +2337,7 @@ dependencies = [
 name = "codex-app-server-transport"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -2344,16 +2345,19 @@ dependencies = [
  "codex-app-server-protocol",
  "codex-config",
  "codex-core",
+ "codex-features",
  "codex-http-client",
  "codex-login",
  "codex-model-provider",
  "codex-protocol",
+ "codex-runtime-agent-instance",
  "codex-state",
  "codex-uds",
  "codex-utils-absolute-path",
  "codex-utils-rustls-provider",
  "codex-websocket-auth",
  "codex-websocket-client",
+ "core_test_support",
  "futures",
  "gethostname",
  "hanzo",
@@ -2374,6 +2378,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wiremock",
  "zstd",
 ]
 
@@ -2479,7 +2484,9 @@ dependencies = [
  "codex-login",
  "codex-model-provider",
  "codex-protocol",
+ "codex-response-debug-context",
  "codex-runtime-agent-instance",
+ "codex-utils-absolute-path",
  "http 1.4.0",
  "pretty_assertions",
  "serde",
@@ -3021,6 +3028,7 @@ dependencies = [
  "codex-apply-patch",
  "codex-async-utils",
  "codex-attachment-store",
+ "codex-backend-client",
  "codex-client",
  "codex-code-mode",
  "codex-config",
@@ -4357,6 +4365,7 @@ dependencies = [
 name = "codex-model-provider"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "chrono",
  "codex-agent-identity",
@@ -4902,6 +4911,7 @@ dependencies = [
  "codex-features",
  "codex-http-client",
  "codex-login",
+ "codex-utils-absolute-path",
  "codex-utils-redacted-string",
  "ed25519-dalek",
  "futures",

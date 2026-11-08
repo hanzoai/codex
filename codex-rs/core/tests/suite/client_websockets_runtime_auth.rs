@@ -2,6 +2,9 @@
 
 use super::*;
 use base64::Engine;
+use codex_extension_api::ExtensionFuture;
+use codex_extension_api::ModelRequestInput;
+use codex_extension_api::ModelResponseInterceptor;
 use codex_features::RuntimeAuthMode;
 use codex_login::ExternalAuth;
 use codex_login::ExternalAuthFuture;
@@ -16,8 +19,11 @@ use codex_runtime_agent_instance::RuntimeRole;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::RwLock;
 use test_case::test_case;
+use tokio::sync::Barrier;
 use uuid::Uuid;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -27,6 +33,26 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 
 struct Credentials(RwLock<CodexAuth>);
+
+#[derive(Debug, Default)]
+struct BudgetChecks(Mutex<VecDeque<Option<Arc<Barrier>>>>);
+
+impl ModelRequestContributor for BudgetChecks {
+    fn budget_exhausted<'a>(&'a self, _thread_id: &'a str) -> ExtensionFuture<'a, bool> {
+        let gate = self.0.lock().unwrap().pop_front().flatten();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.wait().await; // Signal that Core reached this check.
+                gate.wait().await; // Wait for the account switch.
+            }
+            false
+        })
+    }
+
+    fn request(&self, _: ModelRequestInput<'_>) -> Option<Box<dyn ModelResponseInterceptor>> {
+        None
+    }
+}
 
 impl ExternalAuth for Credentials {
     fn resolve(&self) -> ExternalAuthFuture<'_, CodexAuth> {
@@ -56,6 +82,7 @@ async fn runtime_harness(
     registration: &MockServer,
     mut provider: ModelProviderInfo,
     mode: RuntimeAuthMode,
+    request_contributors: Vec<Arc<dyn ModelRequestContributor>>,
 ) -> (WebsocketTestHarness, Arc<Credentials>) {
     provider.requires_openai_auth = true;
     let initial = CodexAuth::from_api_key("key-a");
@@ -66,7 +93,7 @@ async fn runtime_harness(
         /*concurrent_reasoning_summaries_enabled*/ false,
         &[],
         Some(initial.clone()),
-        Vec::new(),
+        request_contributors,
         move |provider, credentials| {
             let credentials = credentials.expect("runtime fixture requires credentials");
             let runtime = Arc::new(RuntimeAuthManager::new(
@@ -218,7 +245,7 @@ async fn http_requests_keep_matching_runtime_and_credentials_across_retries_and_
             },
         ));
     }
-    let (harness, credentials) = runtime_harness(&server, provider, mode).await;
+    let (harness, credentials) = runtime_harness(&server, provider, mode, Vec::new()).await;
     let mut session = harness.client.new_session();
     complete(&mut session, &harness).await.unwrap();
     *credentials.0.write().unwrap() = CodexAuth::from_api_key("key-other-user");
@@ -312,6 +339,8 @@ async fn websocket_reconnects_for_replacement_and_account_switch_within_a_turn(
         vec![response.clone(), response.clone()],
         vec![response.clone(), response.clone()],
         vec![response.clone(), response.clone()],
+        // The account switches after this handshake, before its request is sent.
+        vec![response.clone()],
         vec![response],
     ])
     .await;
@@ -336,7 +365,9 @@ async fn websocket_reconnects_for_replacement_and_account_switch_within_a_turn(
         ("x-openai-fedramp".into(), "true".into()),
         ("x-test-provider-header".into(), "preserved".into()),
     ]));
-    let (harness, credentials) = runtime_harness(&registration, provider, mode).await;
+    let budget = Arc::new(BudgetChecks::default());
+    let (harness, credentials) =
+        runtime_harness(&registration, provider, mode, vec![budget.clone()]).await;
     let mut session = harness.client.new_session();
     let mut input = vec![message_item("first")];
     stream_until_complete(&mut session, &harness, &prompt_with_input(input.clone())).await;
@@ -363,14 +394,27 @@ async fn websocket_reconnects_for_replacement_and_account_switch_within_a_turn(
     stream_until_complete(&mut session, &harness, &prompt_with_input(input.clone())).await;
     assert_eq!(server.handshakes().len(), 3);
 
-    *credentials.0.write().unwrap() = CodexAuth::from_api_key("key-other-user");
     input.push(message_item("fourth"));
-    stream_until_complete(&mut session, &harness, &prompt_with_input(input)).await;
+    let prompt = prompt_with_input(input);
+    let gate = Arc::new(Barrier::new(2));
+    // Allow the pre-connect check, then pause after the old account's socket opens.
+    budget.0.lock().unwrap().extend([None, Some(gate.clone())]);
+    let generation = stream_until_complete(&mut session, &harness, &prompt);
+    tokio::pin!(generation);
+    tokio::select! {
+        () = &mut generation => panic!("generation finished before the post-connect budget check"),
+        _ = gate.wait() => {}
+    }
+    let previous_owner = harness.auth_manager.auth_owner();
+    *credentials.0.write().unwrap() = CodexAuth::from_api_key("key-other-user");
+    harness.auth_manager.reload().await;
+    assert!(!previous_owner.is_current());
+    tokio::join!(generation, gate.wait());
     let handshakes = server.handshakes();
-    assert_eq!(handshakes.len(), 4);
+    assert_eq!(handshakes.len(), 5);
     let runtime_ids: Vec<_> = handshakes
         .iter()
-        .zip(["key-a", "key-a", "key-b", "key-other-user"])
+        .zip(["key-a", "key-a", "key-b", "key-b", "key-other-user"])
         .map(|(h, credential)| {
             assert_eq!(
                 h.header("cookie").as_deref(),
@@ -392,17 +436,18 @@ async fn websocket_reconnects_for_replacement_and_account_switch_within_a_turn(
         .collect();
     assert_eq!(runtime_ids[0], runtime_ids[1]);
     assert_ne!(runtime_ids[1], runtime_ids[2]);
-    assert_ne!(runtime_ids[2], runtime_ids[3]);
+    assert_eq!(runtime_ids[2], runtime_ids[3]);
+    assert_ne!(runtime_ids[3], runtime_ids[4]);
     assert_eq!(
         server
             .connections()
             .iter()
             .map(Vec::len)
             .collect::<Vec<_>>(),
-        vec![1, 1, 1, 1]
+        vec![1, 1, 1, 0, 1]
     );
-    for (index, requests) in server.connections().iter().enumerate() {
-        let body = requests[0].body_json();
+    for (index, request) in server.connections().iter().flatten().enumerate() {
+        let body = request.body_json();
         assert_eq!(body["previous_response_id"], Value::Null);
         // Reconnecting with the same actor preserves turn routing.
         let expected_turn_state = if index == 1 {
@@ -439,7 +484,7 @@ async fn mismatched_organization_never_sends_model_request(mode: RuntimeAuthMode
     provider.supports_websockets = false;
     provider.http_headers =
         Some([(String::from("OpenAI-Organization"), "another-org".into())].into());
-    let (harness, _) = runtime_harness(&server, provider, mode).await;
+    let (harness, _) = runtime_harness(&server, provider, mode, Vec::new()).await;
     let error = complete(&mut harness.client.new_session(), &harness)
         .await
         .unwrap_err();
@@ -479,7 +524,7 @@ async fn gateway_refresh_failure_blocks_runtime_inference(mode: RuntimeAuthMode)
             scheme: "Bearer".into(),
         },
     ));
-    let (harness, _) = runtime_harness(&server, provider.clone(), mode).await;
+    let (harness, _) = runtime_harness(&server, provider.clone(), mode, Vec::new()).await;
     let _gateway = codex_model_provider::test_support::seed_gateway_auth(
         &provider,
         &harness.auth_manager,
@@ -542,7 +587,7 @@ async fn model_runtime_auth_strips_credentials_on_cross_origin_redirects(mode: R
     let mut provider =
         ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
     provider.supports_websockets = false;
-    let (harness, _) = runtime_harness(&server, provider, mode).await;
+    let (harness, _) = runtime_harness(&server, provider, mode, Vec::new()).await;
     complete(&mut harness.client.new_session(), &harness)
         .await
         .unwrap();
@@ -599,7 +644,7 @@ async fn paused_runtime_cannot_continue_on_an_admitted_websocket(mode: RuntimeAu
         listener.local_addr().unwrap()
     )));
     provider.request_max_retries = Some(0);
-    let (harness, _) = runtime_harness(&registration, provider, mode).await;
+    let (harness, _) = runtime_harness(&registration, provider, mode, Vec::new()).await;
     let requests = Arc::new(AtomicUsize::new(0));
     let proofs = Arc::new(std::sync::Mutex::new(Vec::new()));
     let server_requests = Arc::clone(&requests);

@@ -154,6 +154,48 @@
       ],
       "type": "string"
     },
+    "AccountSecuritySetupAction": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "url"
+      ],
+      "type": "object"
+    },
+    "AccountSecuritySetupNotice": {
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/definitions/AccountSecuritySetupAction"
+        },
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accountId",
+        "action",
+        "description",
+        "title",
+        "userId"
+      ],
+      "type": "object"
+    },
     "AccountSession": {
       "properties": {
         "displayName": {
@@ -481,6 +523,37 @@
       "title": "AgentMessageDeltaNotification",
       "type": "object"
     },
+    "AgentMessageDisplay": {
+      "description": "A presentation instruction for Chat to apply to this answer when recovering history.",
+      "properties": {
+        "action": {
+          "description": "Unknown actions must be left for the producing client to handle.",
+          "type": "string"
+        },
+        "blockType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkTrustedContacts": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cyberTrustedAccess": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
     "AgentMessageInputContent": {
       "oneOf": [
         {
@@ -527,6 +600,16 @@
     },
     "AgentMessageModeration": {
       "properties": {
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AgentMessageDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "moderated": {
           "type": "boolean"
         }
@@ -4054,6 +4137,29 @@
             "method"
           ],
           "title": "Account/logoutRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "account/securitySetup/read"
+              ],
+              "title": "Account/securitySetup/readRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "method"
+          ],
+          "title": "Account/securitySetup/readRequest",
           "type": "object"
         },
         {
@@ -9289,6 +9395,24 @@
         "requiresOpenaiAuth"
       ],
       "title": "GetAccountResponse",
+      "type": "object"
+    },
+    "GetAccountSecuritySetupResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Optional security reminder bound to the account that fetched it. Unavailable or ineligible accounts return no notice; this read never changes account security.",
+      "properties": {
+        "notice": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccountSecuritySetupNotice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "GetAccountSecuritySetupResponse",
       "type": "object"
     },
     "GetAccountTokenUsageParams": {

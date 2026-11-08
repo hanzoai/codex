@@ -281,7 +281,7 @@ pub(crate) enum RecapTrigger {
 #[derive(Debug)]
 pub(crate) struct AgentsOverviewThreadRefresh {
     pub(crate) cleared_unread: Vec<ThreadId>,
-    pub(crate) threads: std::collections::HashMap<ThreadId, Option<(Thread, bool)>>,
+    pub(crate) threads: std::collections::HashMap<ThreadId, Option<(Thread, bool, Option<String>)>>,
     pub(crate) last_messages: std::collections::HashMap<ThreadId, String>,
     pub(crate) recent_seed_complete: bool,
     pub(crate) discovery: Option<crate::app::agents_overview_discovery::AgentsOverviewDiscovery>,
@@ -367,6 +367,13 @@ pub(crate) enum AppEvent {
     /// Open the live command center for recent and locally retained root sessions.
     OpenAgentsOverview,
     ShowMoreAgentsOverview,
+    SearchAgentsOverview(Uuid, usize),
+    AgentsOverviewSearchPage {
+        id: Uuid,
+        rows: Vec<(Thread, bool)>,
+        cursor: crate::app::agents_overview_discovery::AgentsOverviewDiscovery,
+        ok: bool,
+    },
     RefreshViewedThread {
         backend_id: crate::backend_id::BackendId,
         thread_id: ThreadId,
@@ -466,7 +473,7 @@ pub(crate) enum AppEvent {
     /// Switch the active thread to the selected agent.
     SelectAgentThread(ThreadId),
 
-    /// Open a transient side conversation for the current thread.
+    /// Open a side conversation for the current thread.
     StartSide {
         parent_thread_id: ThreadId,
         user_message: Option<UserMessage>,
@@ -478,6 +485,25 @@ pub(crate) enum AppEvent {
         parent: ThreadId,
         request: uuid::Uuid,
         result: Result<Box<crate::app_server_session::SidebarFork>, String>,
+    },
+
+    SideChatRemovalFinished {
+        backend_id: crate::backend_id::BackendId,
+        target: ThreadId,
+        request: uuid::Uuid,
+        action: SideChatRemoval,
+        result: Result<(), String>,
+    },
+    SideChatArchived {
+        backend_id: crate::backend_id::BackendId,
+        target: ThreadId,
+    },
+
+    SavedSideChatsLoaded {
+        backend_id: crate::backend_id::BackendId,
+        parent: ThreadId,
+        request: uuid::Uuid,
+        result: Result<Vec<crate::app_server_session::SideChat>, String>,
     },
 
     /// Submit an op to the specified thread, regardless of current focus.
@@ -1948,4 +1974,11 @@ pub(crate) enum FeedbackCategory {
 pub(crate) enum SideStartMode {
     Reuse,
     New,
+}
+
+/// Whether a sidebar action closes a live tab or also archives its saved conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SideChatRemoval {
+    CloseTab,
+    Archive,
 }

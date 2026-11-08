@@ -267,6 +267,9 @@ impl App {
             };
         }
         let mut contexts = contexts.with_pane_directions();
+        if self.sidebar_has_focus() && self.sidebar_chooser_available() {
+            contexts = contexts.with_focused_sidebar();
+        }
         if self.open_pane_focus().is_some() {
             contexts = contexts.with_open_pane();
         }
@@ -660,7 +663,9 @@ impl App {
         }
 
         if side_return_shortcut_matches(key_event)
-            && self.maybe_return_from_side(tui, app_server).await
+            && self
+                .maybe_return_from_side(tui, app_server, key_event)
+                .await
         {
             return;
         }

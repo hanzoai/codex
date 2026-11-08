@@ -25,11 +25,12 @@ use std::sync::Arc;
 pub(crate) async fn select_runtime_auth(
     manager: &Arc<RuntimeAuthBinding>,
     headers: &HeaderMap,
-) -> Result<RuntimeAuth, AuthError> {
+) -> CodexResult<RuntimeAuth> {
+    let selection = resource_selection(headers).map_err(map_runtime_auth_error)?;
     manager
-        .auth_with_selection(&resource_selection(headers)?)
+        .auth_with_selection(&selection)
         .await
-        .map_err(AuthError::from)
+        .map_err(map_runtime_auth_error)
 }
 
 /// Select the request's resource scope while preserving captured credential ownership.
@@ -37,11 +38,19 @@ pub async fn select_runtime_auth_for(
     binding: &Arc<RuntimeAuthBinding>,
     auth: &CodexAuth,
     headers: &HeaderMap,
-) -> Result<RuntimeAuth, AuthError> {
+) -> CodexResult<RuntimeAuth> {
+    let selection = resource_selection(headers).map_err(map_runtime_auth_error)?;
     binding
-        .auth_for(auth, &resource_selection(headers)?)
+        .auth_for(auth, &selection)
         .await
-        .map_err(AuthError::from)
+        .map_err(map_runtime_auth_error)
+}
+
+fn map_runtime_auth_error(error: RuntimeAuthError) -> CodexErr {
+    match error {
+        RuntimeAuthError::RefreshTokenFailed(error) => CodexErr::RefreshTokenFailed(error),
+        error => codex_api::map_api_error(AuthError::from(error).into()),
+    }
 }
 
 /// Select fresh request auth without allowing a reusable client's source to change.
@@ -56,21 +65,19 @@ pub(crate) async fn select_runtime_auth_for_source(
         async move { manager.auth_for_source(source_generation, &selection).await },
     )
     .await
+    .map_err(AuthError::from)
 }
 
 // Once token rotation begins, let it finish persisting even if the request is cancelled.
 pub(crate) async fn finish_runtime_selection(
     selection: impl Future<Output = Result<RuntimeAuth, RuntimeAuthError>> + Send + 'static,
-) -> Result<RuntimeAuth, AuthError> {
-    tokio::spawn(selection)
-        .await
-        .map_err(|error| AuthError::Build(format!("runtime auth task failed: {error}")))?
-        .map_err(AuthError::from)
+) -> Result<RuntimeAuth, RuntimeAuthError> {
+    tokio::spawn(selection).await?
 }
 
 pub(crate) fn resource_selection(
     headers: &HeaderMap,
-) -> Result<PlatformResourceSelection, AuthError> {
+) -> Result<PlatformResourceSelection, RuntimeAuthError> {
     let selector = |name| {
         headers
             .get(name)
@@ -78,7 +85,7 @@ pub(crate) fn resource_selection(
                 value
                     .to_str()
                     .map(str::to_owned)
-                    .map_err(|_| AuthError::Build(format!("invalid {name} resource selector")))
+                    .map_err(|_| RuntimeAuthError::InvalidResourceSelection(name))
             })
             .transpose()
     };

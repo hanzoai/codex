@@ -24,6 +24,7 @@ mod enterprise_login;
 mod gateway_oauth;
 mod gcp_setup;
 mod rate_limit_resets;
+mod security_setup;
 mod workspace_routing;
 mod workspace_switching;
 
@@ -1709,6 +1710,7 @@ mod tests {
                 status,
                 content_type: "application/json".to_string(),
                 body: "{}".to_string(),
+                identity_error_code: None,
             };
             assert_eq!(workspace_messages_feature_disabled(&err), expected);
         }
