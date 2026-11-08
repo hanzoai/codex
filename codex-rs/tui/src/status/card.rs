@@ -905,7 +905,7 @@ impl StatusHistoryCell {
             lines.extend(thread_usage_lines);
         }
 
-        // Leave room for the two-column title mark even in a tiny terminal.
+        // Leave room for the indent even in a tiny terminal.
         let indent = if available_width >= FieldFormatter::INDENT.len() + 2 {
             FieldFormatter::INDENT
         } else {

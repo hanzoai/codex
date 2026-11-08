@@ -96,19 +96,26 @@ pub(crate) fn shimmer_text(text: &str, motion_mode: MotionMode) -> Vec<Span<'sta
     }
 }
 
+/// The running mark pulses: a full circle, a small one, an outline, a small one again.
+const PULSE: [&str; 4] = ["●", "•", "○", "•"];
+const PULSE_PHASE_MS: u128 = 220;
+
 fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
     let elapsed = start_time.map(|st| st.elapsed()).unwrap_or_default();
+    let phase = usize::try_from(elapsed.as_millis() / PULSE_PHASE_MS).unwrap_or_default();
+    let glyph = PULSE[phase % PULSE.len()];
     if supports_color::on_cached(supports_color::Stream::Stdout)
         .map(|level| level.has_16m)
         .unwrap_or(false)
     {
-        shimmer_spans("•")
+        shimmer_spans(glyph)
             .into_iter()
             .next()
-            .unwrap_or_else(|| "•".into())
+            .unwrap_or_else(|| glyph.into())
+    } else if glyph == "○" {
+        glyph.dim()
     } else {
-        let blink_on = (elapsed.as_millis() / 600).is_multiple_of(2);
-        if blink_on { "•".into() } else { "◦".dim() }
+        glyph.into()
     }
 }
 

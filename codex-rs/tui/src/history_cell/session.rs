@@ -3,7 +3,6 @@
 use super::*;
 use crate::line_truncation::line_width;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
-use crate::style::accent_color;
 use crate::width::display_width;
 
 /// Render `lines` inside a border whose inner width is at least `inner_width`.
@@ -43,7 +42,6 @@ pub(crate) fn with_border_with_inner_width(
 /// Brand title shared by the session header and the status card; each owns its own indentation.
 pub(crate) fn codex_title(version: &str) -> Vec<Span<'static>> {
     vec![
-        ">_ ".fg(accent_color()),
         hanzo::PRODUCT_NAME.bold(),
         format!(" (v{version})").dim(),
     ]
@@ -381,20 +379,15 @@ impl SessionHeaderHistoryCell {
 impl HistoryCell for SessionHeaderHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let width = usize::from(width);
-        let mut title = vec!["  ".into()];
-        title.extend(codex_title(self.version));
+        // Flush left, in the column the transcript's bullets and prompt mark use.
         let mut lines = vec![
             Line::default(),
-            Line::from(title),
-            Line::from(vec![
-                "     ".into(),
-                self.format_directory(Some(width.saturating_sub(/*rhs*/ 5)))
-                    .dim(),
-            ]),
+            Line::from(codex_title(self.version)),
+            Line::from(vec![self.format_directory(Some(width)).dim()]),
         ];
         if self.yolo_mode {
             lines.push(Line::from(vec![
-                "  permissions: ".dim(),
+                "permissions: ".dim(),
                 "YOLO mode".magenta().bold(),
             ]));
         }

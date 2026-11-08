@@ -4925,7 +4925,7 @@ impl ChatComposer {
                     Span::from("!").light_red().bold()
                 } else if self.luna_reserve_active {
                     // Reserve keeps one arrow at every reasoning effort; only its foreground changes.
-                    "›"
+                    crate::ui_consts::PROMPT_MARK
                         .fg(crate::terminal_palette::best_color((246, 197, 67)))
                         .bold()
                 } else if let Some(tier) = self.effort_tier {
@@ -4936,10 +4936,10 @@ impl ChatComposer {
                         .unwrap_or(1.0);
                     tier.prompt(charge)
                 } else {
-                    "›".bold()
+                    crate::ui_consts::PROMPT_MARK.bold()
                 }
             } else {
-                "›".dim()
+                crate::ui_consts::PROMPT_MARK.dim()
             };
             buf.set_span(
                 textarea_rect.x - LIVE_PREFIX_COLS,

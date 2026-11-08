@@ -51,6 +51,7 @@ use crate::status::format_tokens_compact;
 use crate::style::secondary_text_style;
 use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::ui_consts::FOOTER_INDENT_COLS;
+use crate::ui_consts::FOOTER_RIGHT_PADDING_COLS;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -651,7 +652,7 @@ fn right_aligned_x(area: Rect, content_width: u16) -> Option<u16> {
         return None;
     }
 
-    let right_padding = FOOTER_INDENT_COLS as u16;
+    let right_padding = FOOTER_RIGHT_PADDING_COLS;
     let max_width = area.width.saturating_sub(right_padding);
     if content_width == 0 || max_width == 0 {
         return None;
@@ -733,9 +734,10 @@ pub(crate) fn render_unfocused_status(text: String, area: Rect, buf: &mut Buffer
 }
 
 pub(crate) fn inset_footer_hint_area(mut area: Rect) -> Rect {
-    if area.width > 2 {
-        area.x += 2;
-        area.width = area.width.saturating_sub(2);
+    let inset = FOOTER_INDENT_COLS as u16;
+    if area.width > inset {
+        area.x += inset;
+        area.width = area.width.saturating_sub(inset);
     }
     area
 }
