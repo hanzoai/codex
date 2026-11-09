@@ -71,7 +71,10 @@ pub const DEFAULT_MODEL: &str = "enso-auto";
 /// the TUI shows before and after submission.
 pub const FEEDBACK_ENDPOINT: &str = "https://api.hanzo.ai/v1/event";
 pub const FEEDBACK_KEY: &str = "pk-YO48Xen0YayGE5n3t0jBv-GWR81uX5qzG3-s9tLPF-4";
-pub const FEEDBACK_ISSUE_URL: &str = "https://github.com/hanzoai/dev/issues/new";
+/// The issue form `/feedback` links to, on `hanzoai/cli`, the `hanzo` command Dev ships
+/// under: `hanzoai/dev` and `hanzoai/codex` have issues turned off, so a link to either
+/// is GitHub's 404. The TUI appends `?body=Uploaded thread: <id>`.
+pub const FEEDBACK_ISSUE_URL: &str = "https://github.com/hanzoai/cli/issues/new";
 pub const FEEDBACK_POLICY_URL: &str = "https://hanzo.ai/privacy";
 
 /// Whether a provider's base URL is [`API_BASE`].
@@ -90,5 +93,14 @@ mod tests {
         assert!(!is_hanzo(Some("http://dgx.local:1235/v1")));
         assert!(!is_hanzo(Some("https://api.hanzo.ai.example/v1")));
         assert!(!is_hanzo(None));
+    }
+
+    /// The link `/feedback` prints opens a repository that takes issues: `hanzoai/dev`
+    /// and `hanzoai/codex` have them turned off and answer `/issues/new` with a 404.
+    #[test]
+    fn feedback_issue_link_opens_a_repository_that_takes_issues() {
+        assert_eq!(FEEDBACK_ISSUE_URL, "https://github.com/hanzoai/cli/issues/new");
+        // The TUI appends the query, so the base carries none of its own.
+        assert!(!FEEDBACK_ISSUE_URL.contains('?'));
     }
 }
