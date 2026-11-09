@@ -75,6 +75,13 @@ pub enum SlashCommand {
     Auth,
     Quit,
     Exit,
+    #[strum(
+        to_string = "feedback",
+        serialize = "bug",
+        serialize = "report",
+        serialize = "share",
+        serialize = "doctor"
+    )]
     Feedback,
     Rollout,
     Ps,
@@ -96,7 +103,7 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::Config => "configure Hanzo preferences",
-            SlashCommand::Feedback => "send logs to maintainers",
+            SlashCommand::Feedback => "share session report & logs with Hanzo",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Hanzo",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
@@ -245,6 +252,7 @@ impl SlashCommand {
                 | SlashCommand::DebugConfig
                 | SlashCommand::Pwd
                 | SlashCommand::Rollout
+                | SlashCommand::Feedback
                 | SlashCommand::Copy
                 | SlashCommand::Raw
         )
@@ -383,5 +391,14 @@ mod tests {
             SlashCommand::from_str("approve"),
             Ok(SlashCommand::AutoReview)
         );
+    }
+
+    #[test]
+    fn bug_report_share_and_doctor_aliases_parse_to_feedback() {
+        assert_eq!(SlashCommand::Feedback.command(), "feedback");
+        for alias in ["feedback", "bug", "report", "share", "doctor"] {
+            assert_eq!(SlashCommand::from_str(alias), Ok(SlashCommand::Feedback));
+        }
+        assert!(SlashCommand::Feedback.available_when_thread_unavailable());
     }
 }

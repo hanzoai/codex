@@ -252,6 +252,21 @@ fn unknown_model_uses_builtin_instruction_template() {
 }
 
 #[test]
+fn hanzo_catalog_models_enable_skills_and_mcp_system_prompt() {
+    let model = model_info_from_slug("enso-auto");
+    assert!(model.include_skills_usage_instructions);
+    let instructions = render_model_instructions(&model);
+    assert!(instructions.contains("Hanzo Dev (`dev`)"));
+    assert!(instructions.contains("Enso"));
+    assert!(instructions.contains("Kai"));
+    assert!(instructions.contains("Zen"));
+    assert!(instructions.contains("hanzo-mcp"));
+    assert!(instructions.contains("hanzoskills.com/mcp/index.json"));
+    assert!(instructions.contains("SKILL.md"));
+    assert!(instructions.contains("Never End a Turn on a Preamble"));
+}
+
+#[test]
 fn model_context_window_override_clamps_to_max_context_window() {
     let mut model = model_info_from_slug("unknown-model");
     model.context_window = Some(273_000);

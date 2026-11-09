@@ -283,6 +283,18 @@ impl FeedbackRequestProcessor {
                     attachment_paths.push(cache_attachment);
                 }
             }
+            for (rel, name) in [
+                ("kai/decisions.jsonl", "kai-decisions.jsonl"),
+                ("kai/ledger.jsonl", "kai-ledger.jsonl"),
+            ] {
+                let path = self.config.codex_home.join(rel).to_path_buf();
+                if path.is_file() && seen_attachment_paths.insert(path.clone()) {
+                    attachment_paths.push(FeedbackAttachmentPath {
+                        path,
+                        attachment_filename_override: Some(name.to_string()),
+                    });
+                }
+            }
         }
         if let Some(extra_log_files) = extra_log_files {
             for extra_log_file in extra_log_files {

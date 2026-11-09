@@ -191,6 +191,15 @@ pub struct DoctorCommand {
     /// Use ASCII status labels and separators in human output.
     #[arg(long, default_value_t = false)]
     ascii: bool,
+
+    /// Share this diagnostic report, recent session rollout, and Kai decision trace with Hanzo.
+    #[arg(
+        long,
+        visible_alias = "report",
+        visible_alias = "upload",
+        default_value_t = false
+    )]
+    pub share: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
@@ -351,11 +360,33 @@ pub async fn run_doctor(
         );
     }
 
-    if report.overall_status == CheckStatus::Fail {
+    if report.overall_status == CheckStatus::Fail && !command.share {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+/// Build a redacted machine-readable JSON doctor report for `dev report` / `dev doctor --share`.
+pub async fn collect_doctor_report_json(
+    root_config_overrides: CliConfigOverrides,
+    interactive: &TuiCli,
+    arg0_paths: &Arg0DispatchPaths,
+) -> anyhow::Result<(String, bool)> {
+    let command = DoctorCommand {
+        probe_filesystem_path: None,
+        json: true,
+        network_only: false,
+        feedback: true,
+        summary: false,
+        all: false,
+        no_color: true,
+        ascii: true,
+        share: false,
+    };
+    let report = build_report(&command, root_config_overrides, interactive, arg0_paths).await;
+    let json = serde_json::to_string_pretty(&redacted_json_report(&report))?;
+    Ok((json, report.overall_status == CheckStatus::Fail))
 }
 
 async fn build_report(
