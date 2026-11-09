@@ -96,26 +96,87 @@ pub(crate) fn shimmer_text(text: &str, motion_mode: MotionMode) -> Vec<Span<'sta
     }
 }
 
-/// The running mark pulses: a full circle, a small one, an outline, a small one again.
-const PULSE: [&str; 4] = ["●", "•", "○", "•"];
-const PULSE_PHASE_MS: u128 = 220;
+/// The running mark is two Braille cells, a grid of four dots by four. A short comet of dots goes
+/// round the edge of the grid, and every few turns the dots gather into an H and let go again.
+pub(crate) const INDICATOR_STEP_MS: u64 = 90;
+const ORBIT_STEP_MS: u128 = INDICATOR_STEP_MS as u128;
+const ORBIT_TURNS: u128 = 3;
+const HOLD_H_MS: u128 = 700;
+/// The edge of the grid, clockwise from the top left: (column, row).
+const ORBIT: [(u8, u8); 12] = [
+    (0, 0),
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (3, 1),
+    (3, 2),
+    (3, 3),
+    (2, 3),
+    (1, 3),
+    (0, 3),
+    (0, 2),
+    (0, 1),
+];
+/// The H: both sides, and the bar across the middle two rows.
+const H: [(u8, u8); 12] = [
+    (0, 0),
+    (0, 1),
+    (0, 2),
+    (0, 3),
+    (3, 0),
+    (3, 1),
+    (3, 2),
+    (3, 3),
+    (1, 1),
+    (2, 1),
+    (1, 2),
+    (2, 2),
+];
+
+/// Two Braille cells holding the dots at these (column, row) places of the four-by-four grid.
+fn braille_pair(dots: &[(u8, u8)]) -> String {
+    const LEFT: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
+    const RIGHT: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
+    let mut cells = [0x2800u32; 2];
+    for &(column, row) in dots {
+        let bits = if column % 2 == 0 { LEFT } else { RIGHT };
+        let bit = bits[usize::from(row)];
+        cells[usize::from(column / 2)] |= bit;
+    }
+    cells
+        .iter()
+        .filter_map(|code| char::from_u32(*code))
+        .collect()
+}
+
+fn indicator_dots(elapsed: Duration) -> String {
+    let orbit_ms = ORBIT_STEP_MS * ORBIT.len() as u128 * ORBIT_TURNS;
+    let t = elapsed.as_millis() % (orbit_ms + HOLD_H_MS);
+    if t >= orbit_ms {
+        return braille_pair(&H);
+    }
+    let head = usize::try_from(t / ORBIT_STEP_MS).unwrap_or_default() % ORBIT.len();
+    let comet: Vec<(u8, u8)> = (0..3)
+        .map(|tail| ORBIT[(head + ORBIT.len() - tail) % ORBIT.len()])
+        .collect();
+    braille_pair(&comet)
+}
 
 fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
     let elapsed = start_time.map(|st| st.elapsed()).unwrap_or_default();
-    let phase = usize::try_from(elapsed.as_millis() / PULSE_PHASE_MS).unwrap_or_default();
-    let glyph = PULSE[phase % PULSE.len()];
+    let dots = indicator_dots(elapsed);
     if supports_color::on_cached(supports_color::Stream::Stdout)
         .map(|level| level.has_16m)
         .unwrap_or(false)
     {
-        shimmer_spans(glyph)
+        let style = shimmer_spans("•")
             .into_iter()
             .next()
-            .unwrap_or_else(|| glyph.into())
-    } else if glyph == "○" {
-        glyph.dim()
+            .map(|span| span.style)
+            .unwrap_or_default();
+        Span::styled(dots, style)
     } else {
-        glyph.into()
+        dots.into()
     }
 }
 

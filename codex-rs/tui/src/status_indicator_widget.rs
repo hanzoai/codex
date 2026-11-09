@@ -310,6 +310,9 @@ impl Renderable for StatusIndicator<'_> {
                 && (self.row.effects.progress || self.row.effects.shimmer)
             {
                 32
+            } else if self.row.animations_enabled {
+                // The running mark moves one dot every step; the clock beside it needs no more.
+                crate::motion::INDICATOR_STEP_MS
             } else {
                 1_000
             };
