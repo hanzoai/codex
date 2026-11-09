@@ -499,7 +499,7 @@ mod tests {
         let bug_url_non_employee =
             issue_url_for_category(FeedbackCategory::Bug, "t", FeedbackAudience::External);
         let expected_external_url =
-            "https://github.com/hanzoai/dev/issues/new?body=Uploaded%20thread:%20t";
+            "https://github.com/hanzoai/cli/issues/new?body=Uploaded%20thread:%20t";
         assert_eq!(bug_url_non_employee.as_deref(), Some(expected_external_url));
     }
 
@@ -516,7 +516,7 @@ mod tests {
         );
         assert_eq!(
             rendered,
-            "• Feedback uploaded. Please open an issue using the following URL:\n\n  https://github.com/hanzoai/dev/issues/new?body=Uploaded%20thread:%20thread-1\n\n  Or mention your thread ID thread-1 in an existing issue."
+            "• Feedback uploaded. Please open an issue using the following URL:\n\n  https://github.com/hanzoai/cli/issues/new?body=Uploaded%20thread:%20thread-1\n\n  Or mention your thread ID thread-1 in an existing issue."
         );
     }
 
