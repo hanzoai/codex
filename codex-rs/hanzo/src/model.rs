@@ -9,9 +9,17 @@ pub enum Pick {
     None,
 }
 
+/// Whether `slug` is a Virtual Model hybrid router (`hybrid/auto`, `hybrid`, `enso-hybrid`, `zen-hybrid`, `hanzo/hybrid`).
+pub fn is_hybrid_router(slug: &str) -> bool {
+    matches!(
+        slug.trim().to_ascii_lowercase().as_str(),
+        "hybrid/auto" | "hybrid" | "enso-hybrid" | "zen-hybrid" | "hanzo/hybrid"
+    )
+}
+
 /// Match `wanted` against the models the session offers and the ones Hanzo
-/// serves: the exact name, then `<name>-auto`, then the only model whose name
-/// contains it. Case does not matter.
+/// serves: the exact name, then `<name>-auto` or `<name>/auto`, then the only
+/// model whose name contains it. Case does not matter.
 pub fn pick(wanted: &str, offered: &[String]) -> Pick {
     let wanted = wanted.trim().to_ascii_lowercase();
     if wanted.is_empty() {
@@ -25,7 +33,10 @@ pub fn pick(wanted: &str, offered: &[String]) -> Pick {
     }
     let lower = |name: &String| name.to_ascii_lowercase();
     let exact = |target: &str| names.iter().find(|name| lower(name) == target).cloned();
-    if let Some(name) = exact(&wanted).or_else(|| exact(&format!("{wanted}-auto"))) {
+    if let Some(name) = exact(&wanted)
+        .or_else(|| exact(&format!("{wanted}-auto")))
+        .or_else(|| exact(&format!("{wanted}/auto")))
+    {
         return Pick::One(name);
     }
     let mut near: Vec<String> = names
