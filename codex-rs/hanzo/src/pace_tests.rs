@@ -55,12 +55,16 @@ fn a_full_window_sends_at_once_and_counts_what_it_sends() {
 }
 
 #[test]
-fn retry_after_on_a_429_or_503_holds_every_request() {
+fn retry_after_on_a_429_or_5xx_holds_every_request() {
     let now = Instant::now();
     let mut budget = learned(429, &[("retry-after", "2")], now);
     assert!(near(budget.take(now), Duration::from_secs(2)));
     let mut budget = learned(503, &[("retry-after", "1.5")], now);
     assert!(near(budget.take(now), Duration::from_millis(1500)));
+    let mut budget = learned(502, &[("retry-after", "3")], now);
+    assert!(near(budget.take(now), Duration::from_secs(3)));
+    let mut budget = learned(529, &[("retry-after", "4")], now);
+    assert!(near(budget.take(now), Duration::from_secs(4)));
     // A success's Retry-After is not advice to wait.
     let mut budget = learned(200, &[("retry-after", "9")], now);
     assert_eq!(budget.take(now), Duration::ZERO);

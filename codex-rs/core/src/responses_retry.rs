@@ -52,18 +52,32 @@ impl Default for ResponsesStreamRetryState {
     }
 }
 
+/// Hanzo: whether an active sampling turn is talking to the Hanzo gateway, where transient
+/// upstream/stream blips must never abort the developer's flow.
+fn is_hanzo_sampling(turn_context: &TurnContext, request: ResponsesStreamRequest) -> bool {
+    matches!(request, ResponsesStreamRequest::Sampling)
+        && !turn_context.session_source.is_internal()
+        && matches!(
+            turn_context.config.model_provider_id.as_str(),
+            "hanzo" | "hanzocode"
+        )
+}
+
 /// Hanzo: what a provider says when it is asking to be called less, not refusing: a 429 that
 /// is not a spent plan or quota, `slow_down`, and an overloaded or unavailable server. Each is
 /// waited out for as long as the turn lives, and named as a wait, never as an error.
-fn slow_down(err: &CodexErr) -> Option<&'static str> {
+fn slow_down(err: &CodexErr, hanzo_sampling: bool) -> Option<&'static str> {
     match err.details() {
         CodexErrorDetails::RateLimitExceeded(_) => Some("waiting for rate limit"),
-        CodexErrorDetails::RetryLimit(limit) if limit.status.as_u16() == 429 => {
-            Some("waiting for rate limit")
-        }
+        CodexErrorDetails::RetryLimit(limit) => match limit.status.as_u16() {
+            429 => Some("waiting for rate limit"),
+            502 | 503 | 520..=529 => Some("waiting for server capacity"),
+            408 | 500 | 504 if hanzo_sampling => Some("waiting for server recovery"),
+            _ => None,
+        },
         CodexErrorDetails::UnexpectedStatus(response) => match response.status.as_u16() {
             429 => Some("waiting for rate limit"),
-            503 => Some("waiting for server capacity"),
+            502 | 503 | 520..=529 => Some("waiting for server capacity"),
             _ => None,
         },
         CodexErrorDetails::ServerOverloaded | CodexErrorDetails::PolicyCapacityUnavailable => {
@@ -71,6 +85,35 @@ fn slow_down(err: &CodexErr) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+async fn wait_for_recovery(
+    retry_state: &mut ResponsesStreamRetryState,
+    err: &CodexErr,
+    reason: &'static str,
+    sess: &Session,
+    turn_context: &TurnContext,
+    operation: RetryOperation,
+) {
+    retry_state.waits = retry_state.waits.saturating_add(1);
+    let now = Instant::now();
+    let retry_at = err
+        .retry_after()
+        .map(RetryAfter::deadline)
+        .unwrap_or_else(|| now + slow_down_delay(retry_state.waits));
+    let delay = retry_at.saturating_duration_since(now);
+    warn!(
+        turn_id = %turn_context.sub_id,
+        waits = retry_state.waits,
+        ?delay,
+        error = %err,
+        "{reason}"
+    );
+    let seconds = delay.as_secs() + u64::from(delay.subsec_nanos() > 0);
+    sess.notify_retry_wait(turn_context, format!("{reason}, retrying in {seconds}s"))
+        .await;
+    codex_client::record_retry!(retry_state.waits, delay, operation);
+    tokio::time::sleep_until(retry_at).await;
 }
 
 /// Hanzo: the `wait`th wait without server advice: uniform in `[0, min(cap, base * 2^(wait-1))]`.
@@ -124,26 +167,9 @@ pub(crate) async fn handle_response_stream_error(
         ResponsesStreamRequest::Sampling => RetryOperation::Sampling,
         ResponsesStreamRequest::RemoteCompactionV2 => RetryOperation::RemoteCompactionV2,
     };
-    if let Some(reason) = slow_down(&err) {
-        retry_state.waits = retry_state.waits.saturating_add(1);
-        let now = Instant::now();
-        let retry_at = err
-            .retry_after()
-            .map(RetryAfter::deadline)
-            .unwrap_or_else(|| now + slow_down_delay(retry_state.waits));
-        let delay = retry_at.saturating_duration_since(now);
-        warn!(
-            turn_id = %turn_context.sub_id,
-            waits = retry_state.waits,
-            ?delay,
-            error = %err,
-            "{reason}"
-        );
-        let seconds = delay.as_secs() + u64::from(delay.subsec_nanos() > 0);
-        sess.notify_retry_wait(turn_context, format!("{reason}, retrying in {seconds}s"))
-            .await;
-        codex_client::record_retry!(retry_state.waits, delay, operation);
-        tokio::time::sleep_until(retry_at).await;
+    let hanzo_sampling = is_hanzo_sampling(turn_context, request);
+    if let Some(reason) = slow_down(&err, hanzo_sampling) {
+        wait_for_recovery(retry_state, &err, reason, sess, turn_context, operation).await;
         return Ok(());
     }
 
@@ -226,6 +252,19 @@ pub(crate) async fn handle_response_stream_error(
         let delay = retry_at.saturating_duration_since(now);
         codex_client::record_retry!(retry_count, delay, operation);
         tokio::time::sleep_until(retry_at).await;
+        return Ok(());
+    }
+
+    if hanzo_sampling {
+        wait_for_recovery(
+            retry_state,
+            &err,
+            "waiting for server recovery",
+            sess,
+            turn_context,
+            operation,
+        )
+        .await;
         return Ok(());
     }
 

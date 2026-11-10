@@ -2,11 +2,16 @@ use super::ResponsesStreamRequest;
 use super::ResponsesStreamRetryState;
 use super::handle_response_stream_error;
 use super::log_retry;
+use super::slow_down;
 use crate::realtime_history::RealtimeHistoryState;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use codex_http_client::RetryAfter;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::CodexErrorDetails;
+use codex_protocol::error::RetryLimitReachedError;
+use codex_protocol::error::UnexpectedResponseError;
+use http::StatusCode;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -97,4 +102,69 @@ async fn stream_retry_preserves_deadline_across_delayed_notification() {
         (advice.deadline()..=advice.deadline() + Duration::from_millis(1)).contains(&resumed_at),
         "retry resumed at {resumed_at:?}, expected {advice:?}"
     );
+}
+
+#[test]
+fn slow_down_waits_out_rate_limits_and_capacity_exhaustion_including_retry_limit() {
+    let retry_limit = |code: u16| -> CodexErr {
+        CodexErrorDetails::RetryLimit(RetryLimitReachedError {
+            status: StatusCode::from_u16(code).unwrap(),
+            request_id: None,
+        })
+        .into()
+    };
+    let unexpected = |code: u16| -> CodexErr {
+        CodexErrorDetails::UnexpectedStatus(UnexpectedResponseError {
+            status: StatusCode::from_u16(code).unwrap(),
+            body: String::new(),
+            user_message: None,
+            url: None,
+            cf_ray: None,
+            request_id: None,
+            identity_authorization_error: None,
+            identity_error_code: None,
+        })
+        .into()
+    };
+
+    assert_eq!(
+        slow_down(&retry_limit(429), false),
+        Some("waiting for rate limit")
+    );
+    assert_eq!(
+        slow_down(&retry_limit(502), false),
+        Some("waiting for server capacity")
+    );
+    assert_eq!(
+        slow_down(&retry_limit(503), false),
+        Some("waiting for server capacity")
+    );
+    assert_eq!(
+        slow_down(&retry_limit(529), false),
+        Some("waiting for server capacity")
+    );
+    assert_eq!(
+        slow_down(&unexpected(502), false),
+        Some("waiting for server capacity")
+    );
+    assert_eq!(
+        slow_down(&unexpected(529), false),
+        Some("waiting for server capacity")
+    );
+
+    // Hanzo sampling also waits out exhausted HTTP 408/500/504 bursts without aborting the turn.
+    assert_eq!(slow_down(&retry_limit(500), false), None);
+    assert_eq!(
+        slow_down(&retry_limit(500), true),
+        Some("waiting for server recovery")
+    );
+    assert_eq!(
+        slow_down(&retry_limit(504), true),
+        Some("waiting for server recovery")
+    );
+
+    // Auth, payment, and client errors never enter unbounded wait.
+    for terminal in [400, 401, 402, 403, 404] {
+        assert_eq!(slow_down(&unexpected(terminal), true), None);
+    }
 }

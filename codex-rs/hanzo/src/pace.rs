@@ -71,7 +71,7 @@ impl Budget {
         if let Some(window) = Window::read(now, "tokens", &header) {
             self.tokens = Some(window);
         }
-        if matches!(status, 429 | 503)
+        if matches!(status, 429 | 502 | 503 | 504 | 520..=529)
             && let Some(wait) = header("retry-after").and_then(seconds)
         {
             self.until = Some(now + wait);
