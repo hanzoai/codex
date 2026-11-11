@@ -4,7 +4,7 @@ expression: terminal.backend().to_string()
 ---
 ↑ more
 › item-2                                                                        
-  10m ago       ⌁ no cwd                          no branch                    
+  10m ago       ⌁ no cwd                         ▶ no branch                    
 
   item-3
 ↓ more

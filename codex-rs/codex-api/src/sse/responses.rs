@@ -382,6 +382,23 @@ pub fn process_responses_event(
             {
                 return Err(ResponsesEventError::Api(error));
             }
+            if let Some(error) = event.error.as_ref() {
+                let err_type = error.get("type").and_then(Value::as_str).unwrap_or_default();
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .filter(|m| !m.trim().is_empty())
+                    .unwrap_or("stream error event received")
+                    .to_owned();
+                let api_err = if matches!(err_type, "validation_error" | "invalid_request_error")
+                    || message.contains("in chat_template")
+                {
+                    ApiError::InvalidRequest { message }
+                } else {
+                    ApiError::Stream(message)
+                };
+                return Err(ResponsesEventError::Api(api_err));
+            }
         }
         "response.output_item.done" => {
             if let Some(item_val) = event.item {
@@ -629,6 +646,9 @@ async fn process_sse_with_treatment(
         };
 
         trace!("SSE event: {}", &sse.data);
+        if sse.data.trim() == "[DONE]" {
+            continue;
+        }
 
         let event: ResponsesStreamEvent = match serde_json::from_str(&sse.data) {
             Ok(event) => event,

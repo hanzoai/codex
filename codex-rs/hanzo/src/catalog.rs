@@ -55,7 +55,21 @@ pub const MODELS: &[Model] = &[
     model("zen5-spark", "Zen 5 Spark", true),
     model("zen6", "Zen 6", true),
     model("zen6-flash", "Zen 6 Flash", true),
+    Model {
+        slug: "zen6-nano",
+        name: "Zen 6 Nano",
+        window: 32_768,
+        vision: true,
+    },
 ];
+
+/// Whether `slug` is an on-device local model served by `hanzo-engine` rather than `api.hanzo.ai`.
+pub fn is_local_only(slug: &str) -> bool {
+    matches!(
+        slug.trim().to_ascii_lowercase().as_str(),
+        "zen6-nano" | "zenlm/zen6-nano" | "hanzoai/zen6-nano"
+    )
+}
 
 /// The served chat model named `slug`, if there is one.
 pub fn find(slug: &str) -> Option<&'static Model> {

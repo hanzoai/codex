@@ -215,7 +215,7 @@ fn compact_picker_keeps_metadata_and_labeled_primary_actions() {
                 terminal.flush().expect("flush");
                 let text = terminal.backend().to_string();
                 assert!(
-                    text.contains(" fcoury/contrast"),
+                    text.contains("▶ fcoury/contrast"),
                     "{width}x{height}: {text}"
                 );
                 assert!(text.contains("now"), "{width}x{height}: {text}");

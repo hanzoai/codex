@@ -104,7 +104,7 @@ const SESSION_META_DATE_WIDTH: usize = 12;
 const SESSION_META_FIELD_GAP_WIDTH: usize = 2;
 const SESSION_META_MIN_CWD_WIDTH: usize = 30;
 const SESSION_META_MAX_CWD_WIDTH: usize = 72;
-const SESSION_META_BRANCH_ICON: &str = "";
+const SESSION_META_BRANCH_ICON: &str = "▶";
 const SESSION_META_CWD_ICON: &str = "⌁";
 const FOOTER_COMPACT_BREAKPOINT: u16 = 120;
 const FOOTER_HINT_LEFT_PADDING: usize = 1;
@@ -4741,7 +4741,7 @@ mod tests {
         assert!(rendered.contains("Created:    17 minutes ago · 2026-05-02 14:31:08"));
         assert!(rendered.contains("Updated:    now · 2026-05-02 14:48:19"));
         assert!(rendered.contains(&format!("Directory:  {expected_directory}")));
-        assert!(rendered.contains("Branch:      codex/raw-scrollback-mode"));
+        assert!(rendered.contains("Branch:     ▶ codex/raw-scrollback-mode"));
         assert!(rendered.contains("Conversation:"));
     }
 
@@ -4772,8 +4772,8 @@ mod tests {
         assert!(created[0].to_string().starts_with("  5h ago"));
         assert!(!updated[0].to_string().contains("created 5h ago"));
         assert!(!created[0].to_string().contains("updated 3h ago"));
-        assert_metadata_order(&updated[0], "⌁ tmp/codex", " main");
-        assert_metadata_order(&created[0], "⌁ tmp/codex", " main");
+        assert_metadata_order(&updated[0], "⌁ tmp/codex", "▶ main");
+        assert_metadata_order(&created[0], "⌁ tmp/codex", "▶ main");
     }
 
     #[test]
@@ -4791,8 +4791,8 @@ mod tests {
         assert_eq!(footer.len(), 1);
         let rendered = footer[0].to_string();
         assert!(rendered.contains("⌁ /tmp/codex"));
-        assert!(rendered.contains(" no branch"));
-        assert_metadata_order(&footer[0], "⌁ /tmp/codex", " no branch");
+        assert!(rendered.contains("▶ no branch"));
+        assert_metadata_order(&footer[0], "⌁ /tmp/codex", "▶ no branch");
     }
 
     #[test]
@@ -4831,7 +4831,7 @@ mod tests {
         assert!(!footer.contains(cwd));
         assert!(footer.contains("⌁ ~/code/codex."));
         assert!(footer.contains("..."));
-        assert!(footer.contains(" owner/branch"));
+        assert!(footer.contains("▶ owner/branch"));
     }
 
     #[test]
@@ -4849,7 +4849,7 @@ mod tests {
         assert_eq!(footer.len(), 1);
         let footer = footer[0].to_string();
         assert!(footer.contains("4h ago"));
-        assert!(footer.contains(" owner/branch"));
+        assert!(footer.contains("▶ owner/branch"));
         assert!(!footer.contains("⌁"));
         assert!(!footer.contains("~/code"));
     }
