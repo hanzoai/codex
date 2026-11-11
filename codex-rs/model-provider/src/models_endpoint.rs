@@ -46,7 +46,7 @@ use crate::combined_auth::compose_auth;
 use crate::provider::resolve_api_provider;
 use crate::request_setup::resolve_request_auth;
 
-const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
 const MODELS_ENDPOINT: &str = "/models";
 const FEDRAMP_CODEX_BASE_URL: &str = "https://gov.chatgpt.com/backend-api/codex";
 

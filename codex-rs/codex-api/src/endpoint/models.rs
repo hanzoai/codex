@@ -77,7 +77,10 @@ impl<T: HttpTransport> ModelsClient<T> {
             .list_models_raw(request_url, extra_headers, response_body_limit_bytes)
             .await?;
         let models = match serde_json::from_slice::<ModelsResponse>(&body) {
-            Ok(ModelsResponse { models }) => models,
+            Ok(ModelsResponse { models }) if !models.is_empty() => models,
+            Ok(ModelsResponse { models }) => {
+                decode_dynamic_models_response(&body).unwrap_or(models)
+            }
             Err(primary_err) => decode_dynamic_models_response(&body).ok_or_else(|| {
                 ApiError::Stream(format!(
                     "failed to decode models response: {:?} at line {} column {} (body: {} bytes)",
@@ -129,12 +132,15 @@ impl<T: HttpTransport> ModelsClient<T> {
 fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
     use codex_protocol::config_types::ReasoningSummary;
     use codex_protocol::openai_models::ConfigShellToolType;
+    use codex_protocol::openai_models::ModelMessages;
     use codex_protocol::openai_models::ModelVisibility;
     use codex_protocol::openai_models::ReasoningEffortPreset;
     use codex_protocol::openai_models::TruncationPolicyConfig;
     use codex_protocol::openai_models::WebSearchToolType;
     use codex_protocol::openai_models::default_input_modalities;
     use serde_json::Value;
+
+    const DYNAMIC_BASE_INSTRUCTIONS: &str = include_str!("../../../models-manager/prompt.md");
 
     let root: Value = serde_json::from_slice(body).ok()?;
     let entries = if let Some(arr) = root.get("data").and_then(Value::as_array) {
@@ -218,7 +224,10 @@ fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
             available_access_programs: None,
             availability_nux: None,
             upgrade: None,
-            model_messages: None,
+            model_messages: Some(ModelMessages {
+                instructions_template: Some(DYNAMIC_BASE_INSTRUCTIONS.to_string()),
+                ..Default::default()
+            }),
             include_skills_usage_instructions: true,
             include_plugin_usage_instructions: false,
             include_apps_usage_instructions: false,
@@ -584,5 +593,11 @@ mod tests {
         assert_eq!(ollama.len(), 2);
         assert_eq!(ollama[0].slug, "deepseek-r1:32b");
         assert_eq!(ollama[1].slug, "qwen3:8b");
+
+        // Verify disk cache (`models_cache.json`) roundtrip deserialization succeeds.
+        let cached_bytes = serde_json::to_vec(&ModelsResponse { models }).expect("serialize cache");
+        let reloaded: ModelsResponse =
+            serde_json::from_slice(&cached_bytes).expect("deserialize cache");
+        assert_eq!(reloaded.models.len(), 2);
     }
 }

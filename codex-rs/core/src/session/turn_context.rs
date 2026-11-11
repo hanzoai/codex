@@ -1508,7 +1508,10 @@ impl Session {
     }
 
     pub(crate) async fn maybe_emit_model_warnings_for_turn(&self, tc: &TurnContext) {
-        if tc.model_info().origin == ModelOrigin::Synthetic {
+        if tc.model_info().origin == ModelOrigin::Synthetic
+            && tc.config.model_provider.is_openai()
+            && !hanzo::is_hanzo(tc.config.model_provider.base_url.as_deref())
+        {
             self.send_event(
                 tc,
                 EventMsg::Warning(WarningEvent {
