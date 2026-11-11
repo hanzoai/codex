@@ -1781,10 +1781,20 @@ class InputAudioFunctionCallOutputContentItem(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    audio_url: str
     type: Annotated[
         Literal["input_audio"], Field(title="InputAudioFunctionCallOutputContentItemType")
     ]
+    audio_url: str
+
+
+class FileIdFunctionCallOutputContentItem1(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Annotated[
+        Literal["input_audio"], Field(title="InputAudioFunctionCallOutputContentItemType")
+    ]
+    file_id: str
 
 
 class EncryptedContentFunctionCallOutputContentItem(BaseModel):
@@ -1885,16 +1895,26 @@ class GatewayOAuthLoginParams(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    device_auth: Annotated[
+        bool | None,
+        Field(
+            alias="deviceAuth",
+            description="Select device authorization when the server advertises support for it.",
+        ),
+    ] = None
     model_provider: Annotated[
         str | None,
         Field(alias="modelProvider", description="Defaults to the current provider when omitted."),
     ] = None
 
 
-class GatewayOAuthLoginResponse(BaseModel):
+class GatewayOAuthPrompt(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    login_id: Annotated[str, Field(alias="loginId")]
+    user_code: Annotated[str, Field(alias="userCode")]
+    verification_url: Annotated[str, Field(alias="verificationUrl")]
 
 
 class GatewayOAuthReadParams(BaseModel):
@@ -8366,6 +8386,7 @@ class ActiveTurnNotSteerableCodexErrorInfo(BaseModel):
 class CodexErrorInfo(
     RootModel[
         CodexErrorInfoValue
+        | Literal["inferenceHookDenied"]
         | HttpConnectionFailedCodexErrorInfo
         | ResponseStreamConnectionFailedCodexErrorInfo
         | ResponseStreamDisconnectedCodexErrorInfo
@@ -8376,6 +8397,7 @@ class CodexErrorInfo(
 ):
     root: Annotated[
         CodexErrorInfoValue
+        | Literal["inferenceHookDenied"]
         | HttpConnectionFailedCodexErrorInfo
         | ResponseStreamConnectionFailedCodexErrorInfo
         | ResponseStreamDisconnectedCodexErrorInfo
@@ -8918,6 +8940,7 @@ class FunctionCallOutputContentItem(
         | InputImageFunctionCallOutputContentItem
         | FileIdFunctionCallOutputContentItem
         | InputAudioFunctionCallOutputContentItem
+        | FileIdFunctionCallOutputContentItem1
         | EncryptedContentFunctionCallOutputContentItem
     ]
 ):
@@ -8926,6 +8949,7 @@ class FunctionCallOutputContentItem(
         | InputImageFunctionCallOutputContentItem
         | FileIdFunctionCallOutputContentItem
         | InputAudioFunctionCallOutputContentItem
+        | FileIdFunctionCallOutputContentItem1
         | EncryptedContentFunctionCallOutputContentItem,
         Field(
             description="Responses API compatible content items that can be returned by a tool call. This is a subset of ContentItem with the types we support as function call outputs."
@@ -8945,8 +8969,19 @@ class GatewayOAuthChangedNotification(BaseModel):
         ),
     ] = None
     error: str | None = None
+    login_id: Annotated[
+        str | None,
+        Field(alias="loginId", description="Identifies the completed device login attempt."),
+    ] = None
     provider_id: Annotated[str, Field(alias="providerId")]
     status: GatewayOAuthStatus
+
+
+class GatewayOAuthLoginResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    prompt: GatewayOAuthPrompt | None = None
 
 
 class GatewayOAuthReadResponse(BaseModel):
@@ -8966,6 +9001,13 @@ class GatewayOAuthReadResponse(BaseModel):
         GatewayOAuthStatus | None,
         Field(description="Null when the effective provider does not use gateway OAuth."),
     ] = None
+    supports_device_auth: Annotated[
+        bool | None,
+        Field(
+            alias="supportsDeviceAuth",
+            description="Whether the administrator configured a device authorization endpoint.",
+        ),
+    ] = False
 
 
 class GetAccountResponse(BaseModel):

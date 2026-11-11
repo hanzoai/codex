@@ -666,6 +666,8 @@ impl SessionConfiguration {
 pub(crate) struct SessionSettingsCommit {
     pub(crate) configuration: SessionConfiguration,
     pub(crate) snapshot: ThreadSettingsSnapshot,
+    /// Receipt for the host's local acceptance of this commit, when applicable.
+    pub(crate) host_acceptance: Option<Shared<BoxFuture<'static, Result<(), String>>>>,
 }
 
 #[derive(Default, Clone)]
@@ -682,6 +684,8 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub(crate) service_tier_for_turn: Option<String>,
+    /// An explicit settings reply waits for host acceptance and can retry an observed failure.
+    pub(crate) host_acceptance_in_reply: bool,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
     pub(crate) disabled_plugin_ids: Option<Vec<String>>,
@@ -1100,7 +1104,7 @@ impl Session {
             && session_configuration.session_source.is_non_root_agent()
             && config.features.enabled(Feature::TokenBudget);
         if restore_child_window && let InitialHistory::Forked(items) = &mut initial_history {
-            let child_window_id = initial_auto_compact_window_ids.window_id.to_string();
+            let child_window_id = initial_auto_compact_window_ids.window_id.clone();
             for item in items {
                 if let RolloutItem::Compacted(checkpoint) = item {
                     checkpoint.window_number = Some(0);
@@ -1179,6 +1183,16 @@ impl Session {
                 )),
             );
         }
+        // Native children receive their enrollment at spawn. A cold resume or durable fork
+        // has no live attachment, even when the rollout is enabled at startup.
+        if matches!(
+            &initial_history,
+            InitialHistory::New | InitialHistory::Cleared
+        ) && !session_source.is_non_root_agent()
+            && config.features.enabled(Feature::DaybreakProgramPropagation)
+        {
+            thread_extension_data.insert(crate::agent::helper_daybreak::Enrollment::Root);
+        }
         thread_extension_data.insert(crate::context::GuardianReviewEvidence::default());
         crate::model_search::SearchOwner::restore(&thread_extension_data, &initial_history);
         // Kick off independent async setup tasks in parallel to reduce startup latency.
@@ -1227,9 +1241,7 @@ impl Session {
                                 ForkPersistence::Referenced { history_base, .. } => *history_base,
                             },
                             subagent_history_start_ordinal: None,
-                            initial_window_id: initial_auto_compact_window_ids
-                                .window_id
-                                .to_string(),
+                            initial_window_id: initial_auto_compact_window_ids.window_id.clone(),
                             runtime_workspace_roots: Some(config.workspace_roots.clone()),
                             metadata: ThreadPersistenceMetadata {
                                 cwd: Some(config.cwd.to_path_buf()),
@@ -1552,9 +1564,8 @@ impl Session {
                 config.model_context_window,
                 config.model_auto_compact_token_limit,
                 config.permissions.approval_policy.value(),
-                config
-                    .permissions
-                    .legacy_sandbox_policy(session_configuration.cwd().as_path()),
+                &config.permissions.effective_permission_profile(),
+                session_configuration.cwd().as_path(),
                 mcp_server_names.iter().map(String::as_str).collect(),
                 &crate::config::legacy_multi_agent_disabled_sources(&config.config_layer_stack),
             );

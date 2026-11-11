@@ -11,6 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use strum_macros::EnumIter;
 
@@ -60,6 +61,7 @@ use crate::plan_tool::UpdatePlanArgs;
 use crate::request_permissions::RequestPermissionsEvent;
 use crate::request_permissions::RequestPermissionsResponse;
 use crate::request_user_input::RequestUserInputResponse;
+use crate::response_item_id::OptionalWireItemId;
 use crate::turn_input::CyberAccessProgram;
 use crate::turn_input::SuspendTurnOutcome;
 use crate::turn_input::TurnInputMode;
@@ -82,6 +84,7 @@ use serde_json::Value;
 use serde_with::serde_as;
 use strum_macros::Display;
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tracing::error;
 use ts_rs::TS;
 
@@ -220,6 +223,16 @@ pub struct ConversationStartParams {
     /// Overrides the configured realtime protocol version for this session only.
     pub version: Option<RealtimeConversationVersion>,
     pub voice: Option<RealtimeVoice>,
+}
+
+/// Controls when an in-process realtime attachment may establish a connection.
+#[derive(Debug, Clone, Default)]
+pub struct RealtimeAttachmentOptions {
+    /// Set the watch to `true` to cancel a pending connection.
+    /// Dropping the sender while its value is `false` lets the attempt continue.
+    pub cancel: Option<watch::Receiver<bool>>,
+    /// Optional caller deadline for publishing the connection. Cleanup can finish later.
+    pub start_before: Option<SystemTime>,
 }
 
 /// A caller-owned realtime sideband. Dropping either direction seals input and ends
@@ -724,8 +737,10 @@ pub enum Op {
     RealtimeConversationStart(ConversationStartParams),
 
     /// Start a realtime conversation and report completion of the connection attempt.
+    /// If cancellation wins, completion acknowledges connection cleanup.
     RealtimeConversationAttach {
         params: ConversationStartParams,
+        options: RealtimeAttachmentOptions,
         reply: oneshot::Sender<CodexResult<()>>,
     },
 
@@ -980,7 +995,8 @@ impl FromStr for ThreadHistoryMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
 pub struct InterAgentCommunication {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
+    #[serde(with = "OptionalWireItemId")]
+    #[ts(optional, as = "Option<ResponseItemId>")]
     pub id: Option<ResponseItemId>,
     pub author: AgentPath,
     pub recipient: AgentPath,
@@ -2092,6 +2108,8 @@ pub enum CodexErrorInfo {
     ModelNotFound,
     /// Capacity is unavailable on a route restricted by server policy.
     PolicyCapacityUnavailable,
+    /// The workspace's inference hook explicitly denied this request.
+    InferenceHookDenied,
     CyberPolicy,
     BioPolicy,
     MisalignmentPolicyViolation,
@@ -2139,6 +2157,7 @@ impl CodexErrorInfo {
             | Self::ServerOverloaded
             | Self::ModelNotFound
             | Self::PolicyCapacityUnavailable
+            | Self::InferenceHookDenied
             | Self::CyberPolicy
             | Self::BioPolicy
             | Self::MisalignmentPolicyViolation
@@ -3431,14 +3450,14 @@ pub enum MultiAgentVersion {
     V2,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct SessionContextWindow {
-    /// UUIDv7 identity of this context window.
-    pub window_id: String,
+    /// Persisted model-facing window identity.
+    pub window_id: crate::ContextWindowId,
 }
 
 impl SessionContextWindow {
-    pub fn new(window_id: String) -> Self {
+    pub fn new(window_id: crate::ContextWindowId) -> Self {
         Self { window_id }
     }
 }
@@ -3464,7 +3483,7 @@ pub struct HistoryPosition {
 /// NOTE: There used to be an `instructions` field here, which stored user_instructions, but we
 /// now save that on TurnContext. base_instructions stores the base instructions for the session,
 /// and should be used when there is no config override.
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct SessionMeta {
     /// Scope discovery to the creator. Absent on threads created before account filtering.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -3496,7 +3515,6 @@ pub struct SessionMeta {
     /// An absent value means unknown; an empty list means no roots.
     /// Keep native paths parseable across hosts; validate them when restoring settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
     pub runtime_workspace_roots: Option<Vec<PathBuf>>,
     pub originator: String,
     pub cli_version: String,
@@ -3585,7 +3603,7 @@ impl Default for SessionMeta {
     }
 }
 
-#[derive(Serialize, Debug, Clone, JsonSchema, TS)]
+#[derive(Serialize, Debug, Clone, JsonSchema)]
 pub struct SessionMetaLine {
     #[serde(flatten)]
     pub meta: SessionMeta,

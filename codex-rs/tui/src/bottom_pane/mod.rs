@@ -199,10 +199,9 @@ mod feedback_view;
 mod hooks_browser_view;
 pub(crate) use feedback_view::FeedbackAudience;
 pub(crate) use feedback_view::feedback_classification;
-pub(crate) use feedback_view::feedback_disabled_params;
+pub(crate) use feedback_view::feedback_consent_params;
 pub(crate) use feedback_view::feedback_selection_params;
 pub(crate) use feedback_view::feedback_success_cell;
-pub(crate) use feedback_view::feedback_upload_consent_params;
 pub(crate) use skills_toggle_view::SkillsToggleItem;
 pub(crate) use skills_toggle_view::SkillsToggleView;
 pub(crate) use status_line_setup::StatusLineItem;
@@ -310,7 +309,7 @@ pub(crate) struct BottomPane {
     warnings_view: Option<warnings_view::WarningsView>,
     /// A keep press can close the viewer; its remaining repeats must not edit the draft.
     pub(crate) suppress_warning_keep_repeat: bool,
-    view_transition_key_guard: Option<crate::activation_key_guard::ActivationKeyGuard>,
+    pub(crate) view_transition_key_guard: Option<crate::activation_key_guard::ActivationKeyGuard>,
     pub(crate) questions: Option<Box<AsyncQuestions>>,
     delayed_approval_requests: VecDeque<DelayedApprovalRequest>,
     last_composer_activity_at: Option<Instant>,
@@ -2446,9 +2445,10 @@ impl BottomPane {
 
     pub(crate) fn backdrop_with_options<'a>(
         &'a self,
-        options: ComposerRenderOptions<'a>,
+        mut options: ComposerRenderOptions<'a>,
     ) -> RenderableItem<'a> {
         let views = if self.centered_dialog().is_some() {
+            options.is_dialog_backdrop = true;
             &self.view_stack[..self.view_stack.len() - 1]
         } else {
             &self.view_stack
@@ -2599,6 +2599,7 @@ impl BottomPane {
                 && options.warning_count == 0
                 && options.footer.is_none()
                 && !options.separate_status_line
+                && !options.is_dialog_backdrop
                 && options.command_popup_placement == CommandPopupPlacement::AboveComposer
             {
                 RenderableItem::Borrowed(&self.composer)

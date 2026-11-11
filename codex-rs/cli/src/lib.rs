@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub(crate) mod debug_sandbox;
 mod exit_status;
+mod git_credential;
 pub(crate) mod login;
 // Upstream declares these in its binary, which puts them out of reach of
 // any other front end. They are self-contained; publishing them from the
@@ -28,6 +29,8 @@ use std::path::PathBuf;
 pub use debug_sandbox::run_command_under_landlock;
 pub use debug_sandbox::run_command_under_seatbelt;
 pub use debug_sandbox::run_command_under_windows_sandbox;
+pub use git_credential::GitCredentialArgs;
+pub use git_credential::run_git_credential;
 pub use login::read_access_token_from_stdin;
 pub use login::read_api_key_from_stdin;
 pub use login::run_login_status;

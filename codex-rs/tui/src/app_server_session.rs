@@ -118,6 +118,8 @@ use codex_app_server_protocol::ThreadMemoryModeSetResponse;
 use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateResponse;
+use codex_app_server_protocol::ThreadPrepareApprovedPlanParams;
+use codex_app_server_protocol::ThreadPrepareApprovedPlanResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
@@ -180,7 +182,7 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const JSONRPC_INVALID_REQUEST: i64 = -32600;
+pub(crate) const JSONRPC_INVALID_REQUEST: i64 = -32600;
 const JSONRPC_METHOD_NOT_FOUND: i64 = -32601;
 const JSONRPC_INVALID_PARAMS: i64 = -32602;
 pub(crate) const EXTERNAL_AGENT_CONFIG_IMPORT_IN_PROGRESS_MESSAGE: &str = "A previous external agent import is still running. Wait for it to finish before importing again.";
@@ -249,6 +251,18 @@ pub(crate) enum ThreadHistorySupport {
 fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> color_eyre::Report {
     let message = format!("{context}: {err}");
     color_eyre::Report::new(err).wrap_err(message)
+}
+
+pub(crate) fn is_method_not_found(error: &TypedRequestError) -> bool {
+    let TypedRequestError::Server { method, source } = error else {
+        return false;
+    };
+    // Older servers report an unknown method as an invalid request during deserialization.
+    source.code == JSONRPC_METHOD_NOT_FOUND
+        || (source.code == JSONRPC_INVALID_REQUEST
+            && source.message.contains(method.as_str())
+            && (source.message.contains("unknown variant")
+                || source.message.contains("unknown method")))
 }
 
 pub(crate) fn is_history_pagination_unsupported(source: &JSONRPCErrorError) -> bool {
@@ -334,10 +348,9 @@ pub(crate) async fn request_thread_start_with_history_fallback(
     }
 }
 
-fn is_thread_settings_update_unsupported(source: &JSONRPCErrorError) -> bool {
+pub(crate) fn is_method_unsupported(source: &JSONRPCErrorError, method: &str) -> bool {
     source.code == JSONRPC_METHOD_NOT_FOUND
-        || (source.code == JSONRPC_INVALID_REQUEST
-            && source.message.contains(THREAD_SETTINGS_UPDATE_METHOD))
+        || (source.code == JSONRPC_INVALID_REQUEST && source.message.contains(method))
 }
 
 /// Data collected during the TUI bootstrap phase that the main event loop
@@ -365,6 +378,15 @@ pub(crate) struct AppServerBootstrap {
     pub(crate) allowed_approval_policies: Option<Vec<AskForApproval>>,
 }
 
+#[derive(Debug)]
+pub(crate) struct AttachmentMetadata {
+    pagination: Option<history::ThreadHistoryPagination>,
+    unread_revision: Option<String>,
+    history_support: ThreadHistorySupport,
+    task_tools: bool,
+    pub(crate) subscribed: bool,
+}
+
 pub(crate) struct AppServerSession {
     backend_id: crate::backend_id::BackendId,
     /// Owns events and the connection lifetime for live sessions. Request-only views share the
@@ -377,6 +399,7 @@ pub(crate) struct AppServerSession {
     /// The newest docked replay refresh on this connection.
     pub(crate) pending_side_skills_refresh: Option<Uuid>,
     history_pagination: HashMap<ThreadId, history::ThreadHistoryPagination>,
+    pub(crate) attachment_subscribed: Option<bool>,
     pub(crate) focused_conversation: Option<ThreadId>,
     pub(crate) attempted_revision: Option<String>,
     pub(crate) frozen_receipt: Option<(ThreadId, String)>,
@@ -390,6 +413,7 @@ pub(crate) struct AppServerSession {
     pub(crate) model_provider_override: Option<String>,
     history_support: ThreadHistorySupport,
     pub(crate) thread_settings_update_supported: bool,
+    cloud_model_selections: HashMap<ThreadId, user_message_submission::CloudModelSelection>,
     default_model: Option<String>,
     available_models: Vec<ModelPreset>,
     prefetched_model_list: Option<RemoteHandle<Result<Vec<ModelPreset>>>>,
@@ -595,6 +619,7 @@ impl AppServerSession {
             next_request_id: 1,
             automatic_name_writes: HashMap::new(),
             pending_side_skills_refresh: None,
+            attachment_subscribed: None,
             history_pagination: HashMap::new(),
             focused_conversation: None,
             attempted_revision: None,
@@ -608,6 +633,7 @@ impl AppServerSession {
             model_provider_override: None,
             history_support: ThreadHistorySupport::Paginated,
             thread_settings_update_supported: true,
+            cloud_model_selections: HashMap::new(),
             default_model: None,
             available_models: Vec::new(),
             prefetched_model_list: None,
@@ -616,6 +642,56 @@ impl AppServerSession {
             external_agent_config_import_id: Mutex::default(),
             dynamic_tool_mcp: None,
             worktree_source_config_builder: None,
+        }
+    }
+
+    pub(crate) fn attachment_view(&self, id: ThreadId) -> Self {
+        let mut view = self
+            .request_view()
+            .with_thread_tool_transport(self.thread_tool_transport());
+        view.attachment_subscribed = Some(false);
+        view.task_tool_capabilities_dir = self.task_tool_capabilities_dir.clone();
+        if self.task_tool_threads.contains(&id) {
+            view.task_tool_threads.insert(id);
+        }
+        if let Some(page) = self.history_pagination.get(&id) {
+            view.history_pagination.insert(id, page.clone());
+        }
+        view
+    }
+
+    pub(crate) fn take_attachment_metadata(&mut self, id: ThreadId) -> AttachmentMetadata {
+        AttachmentMetadata {
+            pagination: self.history_pagination.remove(&id),
+            unread_revision: self.unread_revisions.remove(&id),
+            history_support: self.history_support,
+            task_tools: self.task_tools_available(id),
+            subscribed: self.attachment_subscribed == Some(true),
+        }
+    }
+
+    pub(crate) fn install_attachment_metadata(
+        &mut self,
+        id: ThreadId,
+        metadata: AttachmentMetadata,
+        observed_receipt: bool,
+    ) {
+        if let Some(page) = metadata.pagination {
+            self.history_pagination.insert(id, page);
+        } else {
+            self.history_pagination.remove(&id);
+        }
+        if metadata.history_support == ThreadHistorySupport::LegacyOnly {
+            self.history_support = ThreadHistorySupport::LegacyOnly;
+        }
+        if metadata.task_tools {
+            self.remember_task_tool_thread(id);
+        }
+        if !observed_receipt {
+            self.unread_revisions.remove(&id);
+            if let Some(revision) = metadata.unread_revision {
+                self.unread_revisions.insert(id, revision);
+            }
         }
     }
 
@@ -687,33 +763,6 @@ impl AppServerSession {
         } else {
             None
         };
-        if config
-            .mcp_servers
-            .get()
-            .contains_key(crate::dynamic_tools::NAMESPACE)
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "a user-configured MCP server already owns the TUI tools namespace",
-            ));
-        }
-        let managed_requirement = config
-            .config_layer_stack
-            .requirements()
-            .mcp_servers
-            .as_ref()
-            .map(|requirements| {
-                requirements
-                    .value
-                    .get(crate::dynamic_tools::NAMESPACE)
-                    .ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "managed MCP requirements do not permit the TUI task-tools server",
-                        )
-                    })
-            })
-            .transpose()?;
         let mut thread_start_params = thread_start_params_from_config(
             &config,
             self.thread_params_mode(),
@@ -736,18 +785,21 @@ impl AppServerSession {
             });
         thread_start_params.daybreak_enabled =
             daybreak_launch_override.then_some(config.daybreak_enabled);
-        self.dynamic_tool_mcp = Some(Arc::new(
+        let server = Arc::new(
             DynamicToolMcpServer::start(
                 self.request_handle(),
                 thread_start_params,
                 config.features.get().clone(),
                 app_event_tx,
                 status_updates,
-                managed_requirement,
                 worktrees,
             )
             .await?,
-        ));
+        );
+        ThreadToolTransport::Mcp(Arc::clone(&server))
+            .check_namespace(&self.request_handle, &config.cwd)
+            .await?;
+        self.dynamic_tool_mcp = Some(server);
         Ok(())
     }
 
@@ -783,7 +835,7 @@ impl AppServerSession {
     }
 
     pub(crate) fn uses_embedded_app_server(&self) -> bool {
-        matches!(&self.connection_owner, Some(AppServerClient::InProcess(_)))
+        matches!(&self.request_handle, AppServerRequestHandle::InProcess(_))
     }
 
     /// Carry capabilities that may exist only in memory when the optional cache is unwritable.
@@ -847,6 +899,10 @@ impl AppServerSession {
         let handle = self.request_handle();
         let request_id = self.next_request_id();
         async move {
+            if mode == ThreadParamsMode::Cloud {
+                // Cloud activation supplies the model. Fetch the catalog on picker demand.
+                return Ok(Vec::new());
+            }
             models::list(mode, handle, request_id).await.map_err(|err| {
                 bootstrap_request_error("model/list failed during TUI bootstrap", err)
             })
@@ -1095,7 +1151,9 @@ impl AppServerSession {
             params.history_mode = None;
         }
         if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
-            self.thread_tool_transport().validate_config(config)?;
+            self.thread_tool_transport()
+                .check_namespace(&self.request_handle, &config.cwd)
+                .await?;
             self.thread_tool_transport().configure(&mut params);
         }
         let request_handle = self.request_handle();
@@ -1367,7 +1425,9 @@ impl AppServerSession {
         if self.thread_params_mode == ThreadParamsMode::Cloud {
             color_eyre::eyre::bail!("Cloud conversations cannot be forked in the TUI yet.");
         }
-        self.thread_tool_transport().validate_config(&config)?;
+        self.thread_tool_transport()
+            .check_namespace(&self.request_handle, &config.cwd)
+            .await?;
         let fork_parent = match presentation {
             ForkPresentation::Regular => self
                 .thread_read(thread_id, /*include_turns*/ false)
@@ -1736,7 +1796,7 @@ impl AppServerSession {
         {
             Ok(_) => Ok(true),
             Err(TypedRequestError::Server { source, .. })
-                if is_thread_settings_update_unsupported(&source) =>
+                if is_method_unsupported(&source, THREAD_SETTINGS_UPDATE_METHOD) =>
             {
                 // Older remote app servers can reject this experimental method as
                 // method-not-found, experimental-capability-gated, or an unknown
@@ -1773,8 +1833,21 @@ impl AppServerSession {
             .wrap_err("thread/inject_items failed during TUI side conversation setup")
     }
 
+    pub(crate) async fn thread_prepare_approved_plan(
+        &mut self,
+        params: ThreadPrepareApprovedPlanParams,
+    ) -> Result<String> {
+        let request_id = self.next_request_id();
+        let response: ThreadPrepareApprovedPlanResponse = self
+            .request_handle
+            .request_typed(ClientRequest::ThreadPrepareApprovedPlan { request_id, params })
+            .await
+            .wrap_err("thread/prepareApprovedPlan failed in TUI")?;
+        Ok(response.prompt)
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn turn_start(
+    async fn turn_start(
         &mut self,
         thread_id: ThreadId,
         turn_trigger: &str,
@@ -1792,8 +1865,8 @@ impl AppServerSession {
         collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
         output_schema: Option<serde_json::Value>,
         cyber_access_program: Option<codex_app_server_protocol::CyberAccessProgram>,
+        cloud_selection: Option<&user_message_submission::CloudModelSelection>,
     ) -> Result<TurnStartResponse> {
-        let request_id = self.next_request_id();
         let mut params = TurnStartParams {
             thread_id: thread_id.to_string(),
             turn_trigger: Some(turn_trigger.to_string()),
@@ -1817,7 +1890,11 @@ impl AppServerSession {
             params.effort = effort;
             params.summary = summary;
             params.collaboration_mode = collaboration_mode;
+        } else if let Some(selection) = cloud_selection {
+            params.model = Some(selection.model.clone());
+            params.effort.clone_from(&selection.effort);
         }
+        let request_id = self.next_request_id();
         self.request_handle
             .request_typed(ClientRequest::TurnStart { request_id, params })
             .await
@@ -2023,19 +2100,24 @@ impl AppServerSession {
         Ok(())
     }
 
-    pub(crate) async fn thread_unsubscribe(&mut self, thread_id: ThreadId) -> Result<()> {
+    pub(crate) fn thread_unsubscribe(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let request_id = self.next_request_id();
-        let _: ThreadUnsubscribeResponse = self
-            .request_handle
-            .request_typed(ClientRequest::ThreadUnsubscribe {
-                request_id,
-                params: ThreadUnsubscribeParams {
-                    thread_id: thread_id.to_string(),
-                },
-            })
-            .await
-            .wrap_err("thread/unsubscribe failed in TUI")?;
-        Ok(())
+        let handle = self.request_handle();
+        async move {
+            let _: ThreadUnsubscribeResponse = handle
+                .request_typed(ClientRequest::ThreadUnsubscribe {
+                    request_id,
+                    params: ThreadUnsubscribeParams {
+                        thread_id: thread_id.to_string(),
+                    },
+                })
+                .await
+                .wrap_err("thread/unsubscribe failed in TUI")?;
+            Ok(())
+        }
     }
 
     pub(crate) async fn thread_compact_start(&mut self, thread_id: ThreadId) -> Result<()> {
@@ -2240,7 +2322,9 @@ pub(crate) async fn start_thread_with_request_handle(
         &launch_choices.approval_policy,
     );
     if thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
-        thread_tool_transport.validate_config(&config)?;
+        thread_tool_transport
+            .check_namespace(&request_handle, &config.cwd)
+            .await?;
         launch_choices.configure(&mut params);
         params.daybreak_enabled = (config.daybreak_enabled && !config.ephemeral).then_some(true);
         thread_tool_transport.configure(&mut params);
@@ -3504,7 +3588,7 @@ mod tests {
                 message: message.to_string(),
             };
             assert_eq!(
-                is_thread_settings_update_unsupported(&source),
+                is_method_unsupported(&source, THREAD_SETTINGS_UPDATE_METHOD),
                 expected,
                 "{message}"
             );
@@ -3687,6 +3771,7 @@ mod tests {
                 }),
                 Some(output_schema.clone()),
                 Some(CyberAccessProgram::DaybreakBlue.into()),
+                /*cloud_selection*/ None,
             ),
             async {
                 let command = commands.recv().await.expect("cloud turn start");
@@ -4913,6 +4998,7 @@ mod tests {
                 extra: None,
                 session_id: ThreadId::new().to_string(),
                 forked_from_id: Some(forked_from_id.to_string()),
+                attached_to_thread_id: None,
                 parent_thread_id: None,
                 preview: "hello".to_string(),
                 ephemeral: false,

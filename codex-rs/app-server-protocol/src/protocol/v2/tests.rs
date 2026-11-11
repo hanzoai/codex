@@ -304,6 +304,7 @@ fn thread_resume_response_round_trips_initial_turns_page() {
             extra: None,
             session_id: "thr_123".to_string(),
             forked_from_id: None,
+            attached_to_thread_id: None,
             parent_thread_id: None,
             preview: String::new(),
             ephemeral: false,
@@ -4907,6 +4908,10 @@ fn core_error_info_converts_to_camel_case() {
             json!("policyCapacityUnavailable"),
         ),
         (CoreCodexErrorInfo::CyberPolicy, json!("cyberPolicy")),
+        (
+            CoreCodexErrorInfo::InferenceHookDenied,
+            json!("inferenceHookDenied"),
+        ),
         (CoreCodexErrorInfo::BioPolicy, json!("other")),
         (CoreCodexErrorInfo::InvalidPrompt, json!("other")),
         (
@@ -4918,9 +4923,11 @@ fn core_error_info_converts_to_camel_case() {
             json!("rateLimitExceeded"),
         ),
     ] {
+        let converted = CodexErrorInfo::from(core);
+        assert_eq!(serde_json::to_value(&converted).unwrap(), expected);
         assert_eq!(
-            serde_json::to_value(CodexErrorInfo::from(core)).unwrap(),
-            expected
+            serde_json::from_value::<CodexErrorInfo>(expected).unwrap(),
+            converted
         );
     }
 }

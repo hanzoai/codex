@@ -19,6 +19,7 @@ use codex_config::FeatureRequirementsToml;
 use codex_config::ManagedAuthPolicy;
 use codex_config::McpEnterpriseManagedAuthConfig;
 use codex_config::McpServerRequirement;
+use codex_config::PermissionConfig;
 use codex_config::PluginRequirementsToml;
 use codex_config::ProfileV2Name;
 use codex_config::ResidencyRequirement;
@@ -38,7 +39,9 @@ use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
+use codex_config::resolve_permission_config;
 use codex_config::sandbox_mode_requirement_for_permission_profile;
+use codex_config::translate_legacy_permissions;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::AuthKeyringBackendKind;
@@ -142,6 +145,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use codex_utils_path_uri::PathConvention;
 use codex_utils_path_uri::PathUri;
+use codex_utils_path_uri::Platform;
 use http::HeaderValue;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::FormElicitationCapability;
@@ -327,6 +331,13 @@ pub(crate) async fn test_config() -> Config {
     Config::load_from_base_config_with_overrides(
         ConfigToml {
             model: Some("gpt-5.5".to_string()),
+            features: Some(
+                BTreeMap::from([
+                    (Feature::ToolSuggest.key().to_string(), false),
+                    (Feature::RecommendedPlugins.key().to_string(), false),
+                ])
+                .into(),
+            ),
             ..Default::default()
         },
         ConfigOverrides::default(),
@@ -737,11 +748,11 @@ pub struct Config {
     /// Guardian publication observed before startup loading or last policy refresh.
     pub guardian_policy_revision: u64,
 
-    /// Additional Guardian policy from requirements.toml or config.toml.
+    /// Additional Guardian policy supplied by managed requirements or the host.
     /// Rendered into `{{ extra_policy }}` alongside the resolved tenant policy.
     pub guardian_extra_policy: Option<String>,
 
-    /// Guardian prompt template override from config.toml.
+    /// Guardian prompt template supplied by the host.
     /// The resolved policy config replaces its `{{ tenant_policy_config }}`
     /// placeholder when a review session is built.
     pub guardian_policy_template: Option<String>,
@@ -849,6 +860,7 @@ pub struct Config {
 
     /// Own the fullscreen transcript when the alternate screen is enabled.
     pub tui_fullscreen_transcript: bool,
+    pub tui_collapse_turn_details: bool,
 
     /// Preferred docked sidebar width as a percentage of the terminal.
     pub tui_sidebar_width_percent: Option<u8>,
@@ -1885,6 +1897,7 @@ impl Config {
             self.http_client_factory(),
             self.apps_mcp_product_sku.clone(),
         )
+        .with_plugin_recommendations_enabled(self.features.plugin_recommendations_enabled())
         .with_runtime_auth_mode(
             (self.features.enabled(Feature::RuntimeAgentInstances)
                 && codex_runtime_agent_instance::is_openai_api_url(&self.chatgpt_base_url))
@@ -2695,18 +2708,6 @@ fn is_session_layer(source: &ConfigLayerSource) -> bool {
     matches!(source, ConfigLayerSource::SessionFlags)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PermissionConfigSyntax {
-    Legacy,
-    Profiles,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct PermissionSelectionToml {
-    default_permissions: Option<String>,
-    sandbox_mode: Option<SandboxMode>,
-}
-
 // Resolve the named-profile catalog and selected profile id together. Runtime
 // profile constraints are applied later after this selection compiles into a
 // concrete `PermissionProfile`.
@@ -2728,66 +2729,14 @@ impl EffectivePermissionSelection<'_> {
     fn profiles_are_active(
         &self,
         default_permissions_override: Option<&str>,
-        permission_config_syntax: Option<PermissionConfigSyntax>,
+        permission_config: Option<PermissionConfig<'_>>,
     ) -> bool {
         self.persisted_profile_id_was_provided
             || self.requirements_force_profile_selection
             || default_permissions_override.is_some()
-            || matches!(
-                permission_config_syntax,
-                Some(PermissionConfigSyntax::Profiles)
-            )
-            || permission_config_syntax.is_none()
+            || matches!(permission_config, Some(PermissionConfig::Named { .. }))
+            || permission_config.is_none()
     }
-}
-
-fn resolve_permission_config_syntax(
-    config_layer_stack: &ConfigLayerStack,
-    cfg: &ConfigToml,
-    sandbox_mode_override: Option<SandboxMode>,
-) -> Option<PermissionConfigSyntax> {
-    if sandbox_mode_override.is_some() {
-        return Some(PermissionConfigSyntax::Legacy);
-    }
-
-    let session_flags_select_profiles = config_layer_stack
-        .layers_high_to_low()
-        .find(|layer| matches!(layer.name, ConfigLayerSource::SessionFlags))
-        .and_then(|layer| {
-            layer
-                .config
-                .clone()
-                .try_into::<PermissionSelectionToml>()
-                .ok()
-        })
-        .is_some_and(|selection| selection.default_permissions.is_some());
-    if session_flags_select_profiles {
-        return Some(PermissionConfigSyntax::Profiles);
-    }
-
-    let mut selection = None;
-    for layer in config_layer_stack.layers_low_to_high() {
-        let Ok(layer_selection) = layer.config.clone().try_into::<PermissionSelectionToml>() else {
-            continue;
-        };
-
-        if layer_selection.sandbox_mode.is_some() {
-            selection = Some(PermissionConfigSyntax::Legacy);
-        }
-        if layer_selection.default_permissions.is_some() {
-            selection = Some(PermissionConfigSyntax::Profiles);
-        }
-    }
-
-    selection.or_else(|| {
-        if cfg.default_permissions.is_some() {
-            Some(PermissionConfigSyntax::Profiles)
-        } else if cfg.sandbox_mode.is_some() {
-            Some(PermissionConfigSyntax::Legacy)
-        } else {
-            None
-        }
-    })
 }
 
 /// Optional overrides for user configuration (e.g., from CLI flags).
@@ -3709,7 +3658,7 @@ impl Config {
                 repo_root.as_ref().map(AbsolutePathBuf::as_path),
             )
             .unwrap_or(ProjectConfig { trust_level: None });
-        let permission_config_syntax = resolve_permission_config_syntax(
+        let permission_config = resolve_permission_config(
             &config_layer_stack,
             &cfg,
             sandbox_mode,
@@ -3757,8 +3706,8 @@ impl Config {
         )?;
         if effective_permission_selection.has_profiles()
             && !matches!(
-                permission_config_syntax,
-                Some(PermissionConfigSyntax::Legacy)
+                permission_config,
+                Some(PermissionConfig::Legacy { .. })
             )
             && effective_permission_selection.selected_profile_id.is_none()
             && !effective_permission_selection.requirements_force_profile_selection
@@ -3787,7 +3736,7 @@ impl Config {
 
         let profiles_are_active = effective_permission_selection.profiles_are_active(
             default_permissions_override.as_deref(),
-            permission_config_syntax,
+            permission_config,
         );
         let prefer_mxc = features.enabled(Feature::PreferMxc)
             && config_allows_mxc(
@@ -3810,8 +3759,8 @@ impl Config {
             .persisted_profile_id_was_provided
             || default_permissions_override.is_some()
             || matches!(
-                permission_config_syntax,
-                Some(PermissionConfigSyntax::Profiles)
+                permission_config,
+                Some(PermissionConfig::Named { .. })
             );
         let custom_permission_profiles = permission_profile_catalog_from_permissions(
             &config_layer_stack,
@@ -3823,14 +3772,14 @@ impl Config {
         .collect();
         let using_implicit_builtin_profile = !effective_permission_selection
             .persisted_profile_id_was_provided
-            && permission_config_syntax.is_none()
+            && permission_config.is_none()
             && effective_permission_selection.selected_profile_id.is_none();
         let should_seed_legacy_workspace_roots = effective_permission_selection
             .selected_profile_id
             .is_none()
             && matches!(
-                permission_config_syntax,
-                None | Some(PermissionConfigSyntax::Legacy)
+                permission_config,
+                None | Some(PermissionConfig::Legacy { .. })
             );
         let legacy_workspace_roots_explicit = should_seed_legacy_workspace_roots
             && cfg
@@ -3963,14 +3912,22 @@ impl Config {
             // Derive the old `sandbox_mode` defaults as a profile first, then
             // keep a legacy-compatible projection only for the remaining code
             // paths that still speak `SandboxPolicy`.
-            let mut permission_profile = cfg
-                .derive_permission_profile(
+            let mut permission_profile = if let Some(PermissionConfig::Legacy { mode, workspace_write }) = permission_config {
+                translate_legacy_permissions(
+                    mode,
+                    workspace_write,
+                    Platform::native(),
+                    legacy_windows_sandbox_level,
+                )
+            } else {
+                cfg.derive_permission_profile(
                     sandbox_mode,
                     legacy_windows_sandbox_level,
                     Some(&active_project),
                     Some(&constrained_permission_profile),
                 )
-                .await;
+                .await
+            };
             // The legacy-derived profiles above are expected to be
             // representable as `SandboxPolicy`. This guard keeps the old safe
             // fallback behavior if future changes make this branch derive a
@@ -4365,14 +4322,6 @@ impl Config {
                 policy.validate().map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
                 Ok::<_, std::io::Error>(policy)
             }).transpose()?;
-        let guardian_policy_template = cfg
-            .auto_review
-            .as_ref()
-            .and_then(|auto_review| {
-                normalize_guardian_policy_config(
-                    auto_review.experimental_policy_template.as_deref(),
-                )
-            });
         let guardian_conversation_history_prompt = cfg.auto_review.as_ref().and_then(|auto_review| {
             normalize_guardian_policy_config(
                 auto_review.experimental_conversation_history_prompt.as_deref(),
@@ -4749,7 +4698,7 @@ impl Config {
             guardian_policy_config,
             guardian_policy_revision: 0,
             guardian_extra_policy,
-            guardian_policy_template,
+            guardian_policy_template: None,
             guardian_transcript_mode,
             guardian_sync_elastic_budget,
             guardian_conversation_history_prompt,
@@ -4874,6 +4823,7 @@ impl Config {
                 .as_ref()
                 .map(|t| t.raw_output_mode)
                 .unwrap_or(false),
+            tui_collapse_turn_details: cfg.tui.as_ref().is_some_and(|tui| tui.collapse_turn_details),
             tui_fullscreen_transcript: cfg
                 .tui
                 .as_ref()

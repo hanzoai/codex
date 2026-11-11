@@ -93,6 +93,8 @@ impl App {
                     | AppEvent::SideCreated { .. }
                     | AppEvent::SideChatRemovalFinished { .. }
                     | AppEvent::SideChatArchived { .. }
+                    | AppEvent::SavedChatPrepared { .. } | AppEvent::SavedChatReleased { .. }
+                    | AppEvent::StartQueuedSavedChat
                     | AppEvent::SavedSideChatsLoaded { .. }
                     | AppEvent::SideReplayFinished(_)
                     | AppEvent::ResetTranscriptForThreadSwitch
@@ -543,26 +545,8 @@ impl App {
             AppEvent::RawOutputModeChanged { enabled } => {
                 self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
             }
-            AppEvent::ClearUiAndSubmitUserMessage { text } => {
-                if self.reject_pending_permission_root_switch() {
-                    self.chat_widget.restore_user_message_to_composer(text.into());
-                    return Ok(AppRunControl::Continue);
-                }
-                self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
-                self.reset_app_ui_state_after_clear();
-
-                self.start_fresh_session(
-                    tui,
-                    app_server,
-                    Some(ThreadStartSource::Clear),
-                    crate::chatwidget::create_initial_user_message(
-                        Some(text),
-                        Vec::new(),
-                        Vec::new(),
-                    ),
-                    /*new_thread_name*/ None,
-                )
-                .await;
+            AppEvent::ImplementPlanInFreshSession { plan } => {
+                crate::boxed_future!(self.implement_plan_in_fresh_session(tui, app_server, plan)).await?;
             }
             AppEvent::OpenResumePicker => {
                 self.pending_open_resume_picker = true;
@@ -1057,17 +1041,6 @@ impl App {
             AppEvent::ResetTranscriptForThreadSwitchPreservingScreen => {
                 self.reset_transcript_state_after_clear();
                 tui.clear_pending_history_lines();
-                let switched_tab = self.conversation_frame.chat_strip.is_some()
-                    && self.active_side_parent_thread_id().is_some()
-                    && self.conversation_frame.sidebar_input.is_some_and(|(_, painted_chat, _)| {
-                        painted_chat != self.current_displayed_thread_id()
-                    });
-                if self.conversation_frame.chooser_area().is_none()
-                    && self.chooser_focus().is_none()
-                    && !switched_tab
-                {
-                    tui.defer_thread_switch_clear();
-                }
                 self.pending_thread_switch_resets -= 1;
             }
             AppEvent::CommitRealtimeTranscriptHistory => {
@@ -1097,6 +1070,7 @@ impl App {
                 self.finish_initial_history_replay_buffer(tui);
             }
             AppEvent::ConsolidateAgentMessage {
+                phase,
                 interrupted_item,
                 source,
                 copy_source,
@@ -1107,6 +1081,7 @@ impl App {
             } => {
                 let mut cell = history_cell::AgentMarkdownCell::new_with_inline_visualizations(source, &cwd, inline_visualization_context).with_copy_source(copy_source);
                 cell.interrupted_item = interrupted_item;
+                cell.phase = phase;
                 self.handle_consolidate_agent_message(
                     tui,
                     cell,
@@ -2606,6 +2581,12 @@ impl App {
             }
             AppEvent::ModelsLoaded { request_id, result }
             | AppEvent::ApiKeyCompatModelsLoaded { request_id, result } => {
+                let result = match app_server.request_handle() {
+                    AppServerRequestHandle::Cloud(handle) if !handle.model_catalog_is_current() => {
+                        Err("Cloud model catalog account changed.".into())
+                    }
+                    _ => result,
+                };
                 self.chat_widget.on_models_loaded(request_id, result);
                 let catalog = self.chat_widget.model_catalog();
                 if !Arc::ptr_eq(&self.model_catalog, &catalog) {
@@ -2689,8 +2670,13 @@ impl App {
                 }
             }
             AppEvent::OpenPlanReasoningScopePrompt { model, effort } => {
-                self.chat_widget
-                    .open_plan_reasoning_scope_prompt(model, effort);
+                if app_server.thread_params_mode() == crate::ThreadParamsMode::Cloud {
+                    self.select_session_model(app_server, model, effort, /*service_tier*/ None)
+                        .await;
+                } else {
+                    self.chat_widget
+                        .open_plan_reasoning_scope_prompt(model, effort);
+                }
             }
             AppEvent::OpenAllModelsPopup => {
                 self.chat_widget.open_all_models_popup();
@@ -2709,22 +2695,29 @@ impl App {
             AppEvent::ApplyPermissionShortcut { thread_id, selection } => {
                 self.apply_permission_shortcut(app_server, thread_id, selection).await;
             }
+            AppEvent::OpenFeedback => self.chat_widget.open_feedback(app_server.thread_params_mode()),
             AppEvent::OpenFeedbackNote {
                 category,
                 include_logs,
             } => {
-                self.chat_widget.open_feedback_note(category, include_logs, self.feedback_audience);
+                self.chat_widget.open_feedback_note(
+                    category,
+                    include_logs,
+                    self.feedback_audience,
+                    !app_server.uses_remote_workspace(),
+                );
             }
             AppEvent::OpenFeedbackConsent { category } => {
-                self.chat_widget.open_feedback_consent(category);
+                self.chat_widget.open_feedback_consent(category, !app_server.uses_remote_workspace());
             }
             AppEvent::SubmitFeedback {
                 category,
                 reason,
                 turn_id,
                 include_logs,
+                destination,
             } => {
-                self.submit_feedback(app_server, category, reason, turn_id, include_logs);
+                self.submit_feedback(app_server, category, reason, turn_id, include_logs, destination);
             }
             AppEvent::FeedbackSubmitted {
                 origin_thread_id,
@@ -2896,7 +2889,18 @@ impl App {
                     .await;
             }
             AppEvent::PersistDaybreakSelection { thread_id, enabled } => {
-                self.persist_daybreak_selection(app_server, thread_id, enabled).await;
+                Box::pin(self.persist_daybreak_selection(app_server, thread_id, enabled)).await;
+            }
+            AppEvent::DisableUnavailableDaybreak { thread_id, model } => {
+                if self.chat_widget.current_model() == model
+                    && self.chat_widget.should_disable_daybreak(&model)
+                    && Box::pin(self.persist_daybreak_selection(app_server, thread_id, /*enabled*/ false)).await
+                {
+                    self.chat_widget.add_info_message(
+                        format!("Daybreak has been turned off for new turns because it is not available for {model} with your current account and server. Prior cybersecurity context in this thread may cause a refusal. You can switch back to a model where you have Daybreak access and use /daybreak to re-enable it."),
+                        /*hint*/ None,
+                    );
+                }
             }
             AppEvent::SelectSessionModel { model, effort, service_tier } => {
                 self.app_event_tx.send(AppEvent::FollowTranscript);
@@ -3435,17 +3439,36 @@ impl App {
                     sidebar_close::forget_archived(self, tui, app_server, target).await?;
                 }
             }
-            AppEvent::SavedSideChatsLoaded { backend_id, parent, request, result } => {
-                let visible = self.current_displayed_thread_id() == Some(parent);
-                if let Some(pane) = self.sidebars.get_mut(&Some(parent))
-                    && pane.saved_chats_request == Some(request)
+            AppEvent::SavedChatPrepared { target, request, result } => {
+                Box::pin(self.finish_saved_chat(tui, app_server, target, request, *result)).await?;
+            }
+            AppEvent::SavedChatReleased { target, request } => {
+                self.finish_saved_release(target, request);
+            }
+            AppEvent::StartQueuedSavedChat => {
+                if let Some(target) = self.waiting_saved_chat()
+                    && target.backend_id == app_server.backend_id()
+                    && self.wants_saved_chat(target)
                 {
-                    pane.set_saved_chats_request(/*request*/ None);
-                    if backend_id == app_server.backend_id() {
-                        match result {
-                            Ok(chats) => pane.update_saved_chats(chats),
-                            Err(error) if visible => self.chat_widget.add_error_message(error),
-                            Err(error) => tracing::warn!(%parent, %error),
+                    Box::pin(self.open_saved_chat(tui, app_server, target)).await?;
+                }
+            }
+            AppEvent::SavedSideChatsLoaded { backend_id, parent, request, result } => {
+                use crate::app_event::SavedSideChatData;
+                use crate::sidebar_chooser::Discovery;
+                if let Some(pane) = self.sidebars.get_mut(&Some(parent))
+                    && pane.discovery.request() == Some(request)
+                {
+                    match result {
+                        _ if backend_id != app_server.backend_id() => pane.set_discovery(Discovery::Idle),
+                        Err(error) => pane.set_discovery(Discovery::Failed(error)),
+                        Ok(SavedSideChatData::LatestPrompts(prompts)) => {
+                            pane.latest_prompts = prompts;
+                            pane.set_discovery(Discovery::Idle);
+                        }
+                        Ok(SavedSideChatData::Choices(chats)) => {
+                            pane.update_saved_chats(chats);
+                            self.refresh_visible_side_chat_prompts(tui, app_server, parent, request);
                         }
                     }
                     tui.frame_requester().schedule_frame();

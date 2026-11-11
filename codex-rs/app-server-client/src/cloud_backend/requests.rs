@@ -28,6 +28,7 @@ pub(super) struct Requests {
 pub(super) enum Response {
     Value(Value),
     Attach(Box<protocol::ThreadResumeResponse>),
+    Archived(String),
 }
 
 impl Requests {
@@ -70,6 +71,24 @@ impl Requests {
                 }
                 serde_json::to_value(page)?
             }
+            Request::ThreadArchive { params, .. } => {
+                self.client.archive_thread(&params.thread_id).await?;
+                return Ok(Response::Archived(params.thread_id));
+            }
+            Request::ThreadUnarchive { params, .. } => {
+                let mut thread = self.client.unarchive_thread(&params.thread_id).await?;
+                use_paginated_history(&mut thread);
+                let value = json!({ "thread": thread });
+                send_notification(
+                    output,
+                    protocol::ServerNotification::ThreadUnarchived(
+                        protocol::ThreadUnarchivedNotification {
+                            thread_id: params.thread_id,
+                        },
+                    ),
+                );
+                value
+            }
             Request::ThreadStart { mut params, .. } => {
                 let model = params.model.take();
                 let provider = params.model_provider.take();
@@ -97,14 +116,6 @@ impl Requests {
                 }
                 let settings = self.client.activate(&params.thread_id).await?;
                 return attach_response(settings);
-            }
-            Request::ThreadLoadedList { .. } => {
-                let ids = self
-                    .loaded
-                    .iter()
-                    .map(|loaded| &loaded.thread.id)
-                    .collect::<Vec<_>>();
-                json!({"data": ids, "nextCursor": null})
             }
             Request::ThreadTurnsList { params, .. } => {
                 if params.items_view != Some(protocol::TurnItemsView::NotLoaded) {
@@ -246,7 +257,6 @@ fn thread_list_query(params: protocol::ThreadListParams) -> Result<cloud::Thread
     // Its explicit CLI/VS Code defaults are conventional source names.
     let sources = params.source_kinds.as_deref().unwrap_or_default();
     if !matches!(sources, [] | [Cli, VsCode] | [VsCode, Cli])
-        || params.archived == Some(true)
         || params.cwd.is_some()
         || params.search_term.is_some()
         || params.section_id.is_some()
@@ -268,6 +278,7 @@ fn thread_list_query(params: protocol::ThreadListParams) -> Result<cloud::Thread
     Ok(cloud::ThreadListQuery {
         cursor: params.cursor,
         limit: params.limit,
+        archived: params.archived.unwrap_or_default(),
         originators: params.originators.unwrap_or_default(),
         sort_key: match params.sort_key {
             Some(protocol::ThreadSortKey::CreatedAt) | None => cloud::ThreadSortKey::CreatedAt,
@@ -303,6 +314,11 @@ fn cloud_message(
         ))?;
     let input = std::mem::take(&mut params.input);
     let turn_trigger = params.turn_trigger.take();
+    let (model, effort) = if turn_trigger.as_deref() == Some("user") {
+        (params.model.take(), params.effort.take())
+    } else {
+        (None, None)
+    };
     if params != protocol::TurnStartParams::default() {
         return Err(PreflightRejection(
             "Changing cloud settings or sending structured input is not supported yet.",
@@ -374,6 +390,8 @@ fn cloud_message(
         client_user_message_id,
         input: content,
         turn_trigger,
+        model,
+        effort: effort.map(|effort| effort.to_string()),
         mode: cloud::SubmissionMode::StartIfIdle,
         shared_access: false,
     })

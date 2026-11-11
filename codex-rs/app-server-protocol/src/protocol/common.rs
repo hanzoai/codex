@@ -941,6 +941,12 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadInjectItemsResponse,
     },
+    #[experimental("thread/prepareApprovedPlan")]
+    ThreadPrepareApprovedPlan => "thread/prepareApprovedPlan" {
+        params: v2::ThreadPrepareApprovedPlanParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadPrepareApprovedPlanResponse,
+    },
     SkillsList => "skills/list" {
         params: v2::SkillsListParams,
         serialization: global_shared_read("config"),
@@ -1113,6 +1119,7 @@ client_request_definitions! {
     #[experimental("turn/settings/update")]
     TurnSettingsUpdate => "turn/settings/update" {
         params: v2::TurnSettingsUpdateParams,
+        inspect_params: true,
         serialization: thread_id(params.thread_id),
         response: v2::TurnSettingsUpdateResponse,
     },
@@ -3347,6 +3354,7 @@ mod tests {
                     extra: None,
                     session_id: "67e55044-10b1-426f-9247-bb680e5fe0c7".to_string(),
                     forked_from_id: None,
+                    attached_to_thread_id: None,
                     parent_thread_id: None,
                     preview: "first prompt".to_string(),
                     ephemeral: true,
@@ -3406,6 +3414,7 @@ mod tests {
                         "extra": null,
                         "sessionId": "67e55044-10b1-426f-9247-bb680e5fe0c7",
                         "forkedFromId": null,
+                        "attachedToThreadId": null,
                         "parentThreadId": null,
                         "preview": "first prompt",
                         "ephemeral": true,
@@ -4621,6 +4630,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 thread_settings: v2::ThreadSettings {
                     disabled_plugin_ids: Vec::new(),
+                    environments: Some(Vec::new()),
                     cwd: absolute_path("/tmp/repo"),
                     approval_policy: v2::AskForApproval::Never,
                     approvals_reviewer: v2::ApprovalsReviewer::User,

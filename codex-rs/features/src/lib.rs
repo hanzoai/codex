@@ -106,6 +106,8 @@ pub enum Feature {
     ApiKeyCyberAccessPrograms,
     /// Enable Daybreak controls and automatic access-program selection in CLI clients.
     CliDaybreak,
+    /// Capture the saved Daybreak choice for a native helper and its turns.
+    DaybreakProgramPropagation,
     /// Restrict CLI resume of attributed local threads to their creator.
     CliResumeAccountCheck,
     /// Removed no-op; use `tui.fullscreen_transcript` instead.
@@ -308,7 +310,7 @@ pub enum Feature {
     CommandSessionsWorldState,
     /// Track top-level tool definitions in world state and emit incremental context updates.
     IncrementalTools,
-    /// Publish incremental tool declarations on regular Amazon Bedrock Responses.
+    /// Publish incremental tool declarations on regular Amazon Bedrock and GCP Responses.
     IncrementalToolsLegacy,
     /// Suppress the model ID announcement in incremental context after a model switch.
     SuppressModelChangeAnnouncements,
@@ -1283,8 +1285,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::UntrustedAsToolOutput,
         key: "untrusted_as_tool_output",
-        stage: Stage::UnderDevelopment,
-        default_enabled: false,
+        stage: Stage::Stable,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::ExecutedToolCallMetadata,
@@ -1585,6 +1587,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "api_key_cyber_access_programs",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::DaybreakProgramPropagation,
+        key: "daybreak_program_propagation",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::EnableRequestCompression,

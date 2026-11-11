@@ -9,19 +9,21 @@ use super::make_test_app;
 use super::make_test_app_with_channels;
 use super::start_config_write_test_app_server;
 use super::test_thread_session;
+use crate::app::owned_transcript::tests::buffer_text;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
+use crate::chatwidget::ReplayKind;
 use crate::chatwidget::tests::helpers::render_bottom_popup;
 use crate::chatwidget::tests::helpers::set_active_cell;
 use crate::keymap::KeymapContext;
 #[cfg(unix)]
 use crate::pager_overlay::TranscriptHistoryState;
-use crate::test_support::test_path_display;
 use crate::tui::Tui;
 use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ToolRequestUserInputOption;
 use codex_app_server_protocol::ToolRequestUserInputParams;
 use codex_app_server_protocol::ToolRequestUserInputQuestion;
+use codex_app_server_protocol::TurnStatus;
 use codex_config::types::KeybindingSpec;
 use codex_config::types::KeybindingsSpec;
 use codex_config::types::TuiKeymap;
@@ -160,24 +162,61 @@ async fn vim_buffer_jumps_route_default_chords_in_normal_and_operator_contexts()
 async fn global_chord_keeps_hints_and_completes_before_deadline() -> Result<()> {
     let (mut app, mut tui, mut app_server) = chord_app().await?;
 
-    press(&mut app, &mut tui, &mut app_server, ctrl('x')).await?;
+    let config = toml::from_str(
+        r#"
+        [global]
+        open_transcript = "f12 ctrl-t"
+        open_external_editor = "f12 e"
+        copy = "f12 c"
+        open_agents = "f12 a"
+        toggle_vim_mode = "f12 v"
+        toggle_fast_mode = "f12 f"
+        clear_terminal = "f12 k"
+    "#,
+    )?;
+    app.keymap = RuntimeKeymap::from_config(&config).expect("valid custom prefix");
+    app.chat_widget.apply_keymap_update(config, &app.keymap);
+    tui.set_owned_screen(/*owned*/ true)?;
+    tokio::time::pause();
+    press(&mut app, &mut tui, &mut app_server, KeyCode::F(12).into()).await?;
     assert!(app.key_chord_matcher.is_pending());
     assert!(app.overlay.is_none());
-    tokio::time::pause();
-    tokio::time::advance(std::time::Duration::from_millis(/*millis*/ 500)).await;
     app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
         .await?;
-    assert!(app.key_chord_matcher.is_pending());
-    insta::assert_snapshot!(
-        render_bottom_popup(&app.chat_widget, /*width*/ 80)
-            .replace(&test_path_display("/tmp/project"), "/tmp/project"),
-        @"
-    › Ask Codex to do anything
-
-      ⌃x then · ⌃t open transcript · ⌃u interrupt turn · esc cancel
-    "
+    assert_eq!(tui.shortcut_hud_area, None);
+    tokio::time::advance(crate::keymap::CHORD_REVEAL_DELAY).await;
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+    let mut panel =
+        ratatui::buffer::Buffer::empty(tui.shortcut_hud_area.expect("visible chord guide"));
+    for pos in panel.area.positions() {
+        panel[pos] = tui.terminal.previous_buffer()[pos].clone();
+    }
+    insta::assert_snapshot!("pending_custom_chord", buffer_text(&panel));
+    let narrow_size = ratatui::layout::Size::new(/*width*/ 36, /*height*/ 9);
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Resize(narrow_size))
+        .await?;
+    let narrow = buffer_text(tui.terminal.previous_buffer());
+    assert!(
+        narrow.contains("… more shortcuts") && narrow.contains("Esc cancel"),
+        "{narrow}"
     );
+    tui.set_owned_screen(/*owned*/ false)?;
+    let inline_size = ratatui::layout::Size::new(/*width*/ 36, /*height*/ 5);
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Resize(inline_size))
+        .await?;
+    assert_eq!(tui.shortcut_hud_area, Some(tui.terminal.viewport_area));
+    insta::assert_snapshot!(
+        "pending_custom_chord_inline",
+        buffer_text(tui.terminal.previous_buffer())
+    );
+    tokio::time::advance(std::time::Duration::from_millis(/*millis*/ 650)).await;
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+    assert!(!app.key_chord_matcher.is_pending());
+    assert_eq!(tui.shortcut_hud_area, None);
 
+    press(&mut app, &mut tui, &mut app_server, KeyCode::F(12).into()).await?;
     press(&mut app, &mut tui, &mut app_server, ctrl('t')).await?;
     assert!(!app.key_chord_matcher.is_pending());
     assert!(app.overlay.is_some());
@@ -853,10 +892,13 @@ async fn dashboard_chord_hint_survives_refresh_and_clears_on_cancel() -> Result<
     let before = render_bottom_popup(&app.chat_widget, /*width*/ 80);
     assert_eq!(app.route_key_chord_event(&mut tui, ctrl('x')), None);
     let _ = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
-    insta::assert_snapshot!(
-        render_bottom_popup(&app.chat_widget, /*width*/ 80).lines().last().unwrap(),
-        @"  ⌃x then  n new task  esc cancel"
-    );
+    tokio::time::pause();
+    tokio::time::advance(crate::keymap::CHORD_REVEAL_DELAY).await;
+    app.render_chat_widget_frame(
+        &mut tui,
+        ratatui::layout::Size::new(/*width*/ 80, /*height*/ 24),
+    )?;
+    assert!(buffer_text(tui.terminal.previous_buffer()).contains("New Task"));
     assert_eq!(
         app.route_key_chord_event(&mut tui, KeyCode::Esc.into()),
         None
@@ -1227,6 +1269,33 @@ async fn sidebar_chooser_resize_survives_startup_thread_assignment() -> Result<(
             .await
     );
     assert!(app.pane_resize.is_none());
+    let frame = super::side_frame(&mut app, &mut tui, size)?;
+    let body = frame
+        .lines()
+        .skip(1)
+        .filter_map(|row| row.split_once('│'))
+        .map(|(_, sidebar)| sidebar.trim())
+        .filter(|row| !row.is_empty())
+        .take(3)
+        .collect::<Vec<_>>();
+    insta::assert_snapshot!(body.join("\n"), @"
+    Open in sidebar
+    You can start a side chat after your first message
+    in the main chat.
+    ");
+    Box::pin(press(&mut app, &mut tui, &mut server, ctrl('x'))).await?;
+    Box::pin(press(
+        &mut app,
+        &mut tui,
+        &mut server,
+        KeyCode::Enter.into(),
+    ))
+    .await?;
+    assert_eq!(
+        app.chooser_focus(),
+        Some(crate::app::sidebar::PaneFocus::Sidebar)
+    );
+    assert!(app.sidebar().unwrap().creation.is_none());
     server.shutdown().await?;
     Ok(())
 }
@@ -1243,6 +1312,14 @@ async fn sidebar_chooser_preserves_the_parent_draft_and_starts_a_side_chat() -> 
     server.remember_thread_history_mode(parent, ThreadHistoryMode::Legacy);
     app.chat_widget
         .handle_thread_session(test_thread_session(parent, app.config.cwd.to_path_buf()));
+    app.chat_widget.replay_thread_turns(
+        vec![super::test_turn(
+            "parent-turn",
+            TurnStatus::Completed,
+            Vec::new(),
+        )],
+        ReplayKind::ResumeInitialMessages,
+    );
     app.chat_widget.local_settings.tui.status_line = Some(vec!["model-with-reasoning".into()]);
     app.chat_widget.refresh_status_line();
     app.chat_widget.insert_str("parent draft");
@@ -1384,7 +1461,7 @@ async fn sidebar_chooser_preserves_the_parent_draft_and_starts_a_side_chat() -> 
             request,
             started: std::time::Instant::now(),
         },
-        message: Some(first_prompt.clone()),
+        message: Some(first_prompt),
     });
     app.finish_side_creation(
         &mut tui,
@@ -1434,16 +1511,11 @@ prepared.
         super::side_frame(&mut app, &mut tui, ratatui::layout::Size::new(30, 8))?
             .contains("Open in sidebar")
     );
-    assert_eq!(
-        app.chat_widget.composer_draft_snapshot().remote_image_urls,
-        first_prompt.remote_image_urls
-    );
-    let draft = app.chat_widget.composer_text_with_pending();
-    assert!(
-        draft.contains("first prompt") && draft.contains("second prompt"),
-        "{draft}"
-    );
-    // The pinned New action leaves room for two scrolling chats.
+    let draft = app.chat_widget.composer_draft_snapshot();
+    assert!(draft.remote_image_urls.is_empty());
+    insta::assert_snapshot!(draft.text, @"second prompt
+parent draft!");
+    // A page fits a chat with a subtitle or two title-only chats.
     let pane = app.sidebar_mut();
     for _ in 0..4 {
         pane.chat_ready(ThreadId::new());
@@ -1453,13 +1525,23 @@ prepared.
         crate::app::sidebar::PaneFocus::Sidebar,
     );
     pane.choice = 2;
-    let two_rows = ratatui::layout::Size::new(/*width*/ 120, /*height*/ 11);
+    let id = pane.chat_tabs().choice(/*index*/ 2).unwrap();
+    pane.latest_prompts.insert(id, "Latest request".into());
+    let two_rows = ratatui::layout::Size::new(/*width*/ 120, /*height*/ 12);
     tui.terminal = terminal_at(two_rows);
     super::side_frame(&mut app, &mut tui, two_rows)?;
-    for (key, expected) in [(KeyCode::PageDown, 4), (KeyCode::PageUp, 2)] {
+    for (key, expected) in [
+        (KeyCode::PageDown, 3),
+        (KeyCode::PageDown, 5),
+        (KeyCode::PageUp, 3),
+        (KeyCode::PageUp, 2),
+    ] {
         Box::pin(press(&mut app, &mut tui, &mut server, key.into())).await?;
         assert_eq!(app.sidebar().unwrap().choice, expected);
     }
+    Box::pin(press(&mut app, &mut tui, &mut server, ctrl('c'))).await?;
+    assert_eq!(app.chooser_focus(), None);
+    assert_eq!(app.chat_widget.composer_text_with_pending(), draft.text);
     tokio::time::resume();
     server.shutdown().await?;
     Ok(())

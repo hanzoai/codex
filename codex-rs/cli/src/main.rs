@@ -105,6 +105,7 @@ use codex_login::AuthManager;
 use codex_memories_write::clear_memory_roots_contents;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::manager::RefreshStrategy;
+use codex_protocol::auth::AuthMode;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_terminal_detection::TerminalName;
@@ -146,9 +147,10 @@ enum Subcommand {
     /// Open the agent command center to browse and switch sessions.
     Agents(AgentsCommand),
 
-    /// Internal: forward a local TCP socket through an HTTP/3 CONNECT proxy.
+    /// Internal: forward SSH stdio or a local TCP socket through an HTTP/3 CONNECT proxy.
     #[clap(hide = true)]
     TcpTunnel(codex_tcp_tunnel::Args),
+
     /// Run Codex non-interactively.
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
@@ -158,6 +160,10 @@ enum Subcommand {
 
     /// Manage login.
     Login(LoginCommand),
+
+    /// Supply the existing Codex login to Git's credential-helper protocol.
+    #[clap(hide = true)]
+    GitCredential(codex_cli::GitCredentialArgs),
 
     /// Remove stored authentication credentials.
     Logout(LogoutCommand),
@@ -1150,8 +1156,38 @@ async fn dispatch_cli(
                 arg0_paths,
             )));
         }
-        Some(Subcommand::TcpTunnel(args)) => {
+        Some(Subcommand::TcpTunnel(args)) if args.auth_token_stdin => {
             codex_tcp_tunnel::run(args).await?;
+        }
+        Some(Subcommand::TcpTunnel(args)) => {
+            let config =
+                cloud_config::load_config(&root_config_overrides, LoaderOverrides::default())
+                    .await?;
+            let permit = config.application_network_policy.acquire(&args.proxy_url)?;
+            let manager = AuthManager::shared_from_config_with_auth_modes(
+                &config,
+                /*enable_codex_api_key_env*/ false,
+                vec![AuthMode::Chatgpt, AuthMode::ChatgptAuthTokens],
+            )
+            .await?;
+            anyhow::ensure!(
+                manager.auth_mode() == Some(AuthMode::Chatgpt),
+                "ChatGPT OAuth login required for SSH"
+            );
+            let access_token = async {
+                let oauth = manager
+                    .auth()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("ChatGPT OAuth login required for SSH"))?;
+                Ok(oauth.get_token_data()?.access_token)
+            };
+            permit
+                .run(codex_tcp_tunnel::run_ssh_proxy(
+                    args,
+                    access_token,
+                    tokio::io::stdout(),
+                ))
+                .await??;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1329,9 +1365,6 @@ async fn dispatch_cli(
                     }
                 }
                 Some(AppServerSubcommand::Daemon(daemon_cli)) => match daemon_cli.subcommand {
-                    AppServerDaemonSubcommand::Start => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Start).await?;
-                    }
                     AppServerDaemonSubcommand::Bootstrap(bootstrap_cli) => {
                         let output =
                             codex_app_server_daemon::bootstrap(AppServerBootstrapOptions {
@@ -1340,7 +1373,10 @@ async fn dispatch_cli(
                             .await?;
                         println!("{}", serde_json::to_string(&output)?);
                     }
-                    AppServerDaemonSubcommand::Restart => {
+                    command @ (AppServerDaemonSubcommand::Start
+                    | AppServerDaemonSubcommand::Restart) => {
+                        let start = matches!(command, AppServerDaemonSubcommand::Start);
+                        let action = if start { "start" } else { "restart" };
                         let overrides = root_config_overrides
                             .parse_overrides()
                             .map_err(anyhow::Error::msg)?;
@@ -1369,18 +1405,20 @@ async fn dispatch_cli(
                             let feature =
                                 codex_features::feature_for_key(name).ok_or_else(|| {
                                     anyhow::anyhow!(
-                                        "daemon restart requires a boolean feature toggle: {name}"
+                                        "daemon {action} requires a boolean feature toggle: {name}"
                                     )
                                 })?;
                             let enabled = value.as_bool().ok_or_else(|| {
-                                anyhow::anyhow!("daemon restart requires a boolean enablement for features.{name}")
+                                anyhow::anyhow!("daemon {action} requires a boolean enablement for features.{name}")
                             })?;
                             feature_overrides.insert(feature.key().to_string(), enabled);
                         }
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Restart {
-                            feature_overrides,
-                        })
-                        .await?;
+                        let command = if start {
+                            AppServerLifecycleCommand::Start { feature_overrides }
+                        } else {
+                            AppServerLifecycleCommand::Restart { feature_overrides }
+                        };
+                        print_app_server_daemon_output(command).await?;
                     }
                     AppServerDaemonSubcommand::Update {
                         from_cli: true,
@@ -1645,6 +1683,19 @@ async fn dispatch_cli(
                 remote.remote_auth_token_env.or(root_remote_auth_token_env),
                 arg0_paths,
             )));
+        }
+        Some(Subcommand::GitCredential(mut args)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "git-credential",
+            )?;
+            prepend_config_flags(&mut args.config_overrides, root_config_overrides.clone());
+            // Git falls back to prompting after helper errors; quitting must be explicit.
+            if let Err(error) = codex_cli::run_git_credential(args).await {
+                eprintln!("{error}");
+                println!("quit=true\n");
+            }
         }
         Some(Subcommand::Login(mut login_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -2383,6 +2434,7 @@ fn unsupported_subcommand_name_for_strict_config(
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(_)) => Some("app"),
         Some(Subcommand::Login(_)) => Some("login"),
+        Some(Subcommand::GitCredential(_)) => Some("git-credential"),
         Some(Subcommand::Logout(_)) => Some("logout"),
         Some(Subcommand::Completion(_)) => Some("completion"),
         Some(Subcommand::Update) => Some("update"),

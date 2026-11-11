@@ -503,6 +503,8 @@ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()> 
 async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
     let mut app = crate::app::test_support::make_test_app().await;
     attach_thread(&mut app, ThreadId::new());
+    app.chat_widget
+        .set_status_line(Some("gpt-test default · /tmp/project".into()));
     app.transcript_cells = vec![user_cell("First prompt"), user_cell("Second prompt")];
     app.chat_widget
         .apply_external_edit("preserved draft".to_string());
@@ -1216,6 +1218,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
     .expect("independent query bindings");
     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
     let mut tui = crate::tui::test_support::make_test_tui()?;
+    tokio::time::pause();
     for owned in [true, false] {
         tui.set_owned_screen(owned)?;
         if !owned {
@@ -1251,6 +1254,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
                 );
             }
             if app.key_chord_matcher.is_pending() {
+                tokio::time::advance(crate::keymap::CHORD_REVEAL_DELAY).await;
                 app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
                     .await?;
                 let rendered = buffer_text(
@@ -1261,18 +1265,17 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
                     .lines()
                     .nth(usize::from(cursor.y))
                     .expect("visible query caret");
-                assert_eq!(query_row.trim(), "Find: alpha betax");
-                assert!(rendered.contains("h move line start"));
-                insta::assert_snapshot!(
-                    "owned_find_pending_chord_footer",
-                    rendered
-                        .lines()
-                        .skip(usize::from(cursor.y))
-                        .take(/*n*/ 2)
-                        .map(str::trim)
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                let hud = tui.shortcut_hud_area.expect("visible editor completions");
+                assert!(cursor.x < hud.x);
+                assert_eq!(
+                    query_row
+                        .chars()
+                        .take(usize::from(hud.x))
+                        .collect::<String>()
+                        .trim(),
+                    "Find: alpha betax"
                 );
+                assert!(rendered.contains("h · Move Line Start"), "{rendered}");
             }
         }
         app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
@@ -1664,6 +1667,17 @@ async fn find_refreshes_live_details_before_searching_the_first_query() -> Resul
         ))
         .contains("needle")
     );
+    app.local_settings.tui.collapse_turn_details = true;
+    app.render_owned_transcript(&mut tui, Size::new(80, 24))?;
+    let summary = buffer_text(crate::custom_terminal::test_support::last_rendered_buffer(
+        &tui.terminal,
+    ));
+    assert!(
+        summary.contains("Running")
+            && summary.contains("printf visible")
+            && !summary.contains("needle"),
+        "{summary}"
+    );
     crate::app::test_support::enable_side_retention(&mut app)?;
     app.handle_tui_event(
         &mut tui,
@@ -1883,11 +1897,16 @@ async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
         assert!(!app.handle_composer_copy_event(&mut tui, event, |_, _| unreachable!()));
     }
 
+    // The selection hint can move the draft by one row.
+    app.render_owned_transcript(&mut tui, size)?;
+    let y = row_containing(&tui, "hellox world");
     // A fresh composer click takes ownership away from the transcript selection.
     app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Down(Left), x, y))?;
     assert!(!app.transcript_view.has_active_interaction());
     app.chat_widget.apply_external_edit("/".into());
     assert!(!app.chat_widget.no_modal_or_popup_active());
+    app.render_owned_transcript(&mut tui, size)?;
+    let y = tui.terminal.last_known_cursor_pos.y;
     assert!(app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Down(Left), x, y))?);
     app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Drag(Left), x + 1, y))?;
     assert!(app.chat_widget.no_modal_or_popup_active());

@@ -1406,6 +1406,7 @@ fn config_toml_deserializes_model_availability_nux() {
             question_esc_back: true,
             raw_output_mode: false,
             fullscreen_transcript: true,
+            collapse_turn_details: false,
             sidebar_width_percent: None,
             mouse_scroll_speed: None,
             copy_on_select: Default::default(),
@@ -4774,6 +4775,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             question_esc_back: true,
             raw_output_mode: false,
             fullscreen_transcript: true,
+            collapse_turn_details: false,
             sidebar_width_percent: None,
             mouse_scroll_speed: None,
             copy_on_select: Default::default(),
@@ -8886,29 +8888,19 @@ async fn load_config_uses_requirements_guardian_policy_config() -> std::io::Resu
 }
 
 #[test]
-fn config_toml_deserializes_auto_review_policy_and_template() {
+fn config_toml_deserializes_auto_review_policy() {
     let cfg = toml::from_str::<ConfigToml>(
         r#"
 [auto_review]
 policy = "Use the user-configured guardian policy."
-extra_policy = "Use the user-configured additional policy."
-experimental_policy_template = "Configured template: {{ tenant_policy_config }}"
 "#,
     )
     .expect("TOML deserialization should succeed");
 
     let auto_review = cfg.auto_review.as_ref().expect("auto-review config");
     assert_eq!(
-        (
-            auto_review.policy.as_deref(),
-            auto_review.extra_policy.as_deref(),
-            auto_review.experimental_policy_template.as_deref(),
-        ),
-        (
-            Some("Use the user-configured guardian policy."),
-            Some("Use the user-configured additional policy."),
-            Some("Configured template: {{ tenant_policy_config }}"),
-        )
+        auto_review.policy.as_deref(),
+        Some("Use the user-configured guardian policy.")
     );
 }
 
@@ -8918,7 +8910,7 @@ experimental_policy_template = "Configured template: {{ tenant_policy_config }}"
 #[test_case::test_case("[guardianv2]\nasync_classifier_mode = 'snapshot'", codex_protocol::TranscriptFormat::Line; "legacy_snapshot")]
 #[test_case::test_case("[guardianv2]\nasync_classifier_mode = 'conversation'", codex_protocol::TranscriptFormat::Line; "legacy_conversation")]
 #[tokio::test]
-async fn load_config_uses_auto_review_guardian_policy_config_and_template(
+async fn load_config_uses_auto_review_guardian_policy_config(
     features: &str,
     expected_mode: codex_protocol::TranscriptFormat,
 ) -> std::io::Result<()> {
@@ -8926,15 +8918,8 @@ async fn load_config_uses_auto_review_guardian_policy_config_and_template(
     let cfg = ConfigToml {
         features: Some(toml::from_str(features).unwrap()),
         auto_review: Some(AutoReviewToml {
-            timeout_ms: None,
-            circuit_break_action: None,
             policy: Some("  Use the user-configured guardian policy.  ".to_string()),
-            extra_policy: Some("  Use the user-configured additional policy.  ".to_string()),
-            experimental_policy_template: Some(
-                "  Configured template: {{ tenant_policy_config }}  ".to_string(),
-            ),
-            experimental_conversation_history_prompt: None,
-            conversation_history_max_output_tokens: None,
+            ..Default::default()
         }),
         ..Default::default()
     };
@@ -8953,14 +8938,10 @@ async fn load_config_uses_auto_review_guardian_policy_config_and_template(
         (
             config.guardian_transcript_mode,
             config.guardian_policy_config.as_deref(),
-            config.guardian_extra_policy.as_deref(),
-            config.guardian_policy_template.as_deref(),
         ),
         (
             expected_mode,
             Some("Use the user-configured guardian policy."),
-            Some("Use the user-configured additional policy."),
-            Some("Configured template: {{ tenant_policy_config }}"),
         )
     );
 
@@ -9027,10 +9008,10 @@ async fn requirements_guardian_policy_beats_auto_review() -> std::io::Result<()>
     for (managed_extra, expected_extra) in [
         (
             Some("  Use the managed additional policy.  "),
-            "Use the managed additional policy.",
+            Some("Use the managed additional policy."),
         ),
-        (Some("   "), "Use the user-configured additional policy."),
-        (None, "Use the user-configured additional policy."),
+        (Some("   "), None),
+        (None, None),
     ] {
         let config_layer_stack = ConfigLayerStack::new(
             Vec::new(),
@@ -9044,13 +9025,8 @@ async fn requirements_guardian_policy_beats_auto_review() -> std::io::Result<()>
         .map_err(std::io::Error::other)?;
         let cfg = ConfigToml {
             auto_review: Some(AutoReviewToml {
-                timeout_ms: None,
-                circuit_break_action: None,
                 policy: Some("Use the user-configured guardian policy.".to_string()),
-                extra_policy: Some("Use the user-configured additional policy.".to_string()),
-                experimental_policy_template: None,
-                experimental_conversation_history_prompt: None,
-                conversation_history_max_output_tokens: None,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -9072,10 +9048,7 @@ async fn requirements_guardian_policy_beats_auto_review() -> std::io::Result<()>
                 config.guardian_policy_config.as_deref(),
                 config.guardian_extra_policy.as_deref(),
             ),
-            (
-                Some("Use the managed guardian policy."),
-                Some(expected_extra),
-            )
+            (Some("Use the managed guardian policy."), expected_extra,)
         );
     }
     Ok(())
@@ -9086,13 +9059,9 @@ async fn load_config_ignores_empty_auto_review_guardian_policy_config() -> std::
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
         auto_review: Some(AutoReviewToml {
-            timeout_ms: None,
-            circuit_break_action: None,
             policy: Some("   ".to_string()),
-            extra_policy: Some("   ".to_string()),
-            experimental_policy_template: None,
             experimental_conversation_history_prompt: Some(String::new()),
-            conversation_history_max_output_tokens: None,
+            ..Default::default()
         }),
         ..Default::default()
     };

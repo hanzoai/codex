@@ -5,8 +5,10 @@ expression: "render(&view, 60)"
 ▌ Tell us more (bug)
 ▌
 ▌ Your feedback can be used to improve Dev. Learn more.
+▌ You can also save feedback to a ZIP file, which is not
+▌ sent to OpenAI.
 ▌
 ▌ foo
 ▌ bar
 
-Press enter to submit or esc to cancel
+⌃s save ZIP · enter send to OpenAI · esc cancel

@@ -186,7 +186,7 @@ mod tests {
                     history_mode: ThreadHistoryMode::Legacy,
                     history_base: None,
                     subagent_history_start_ordinal: None,
-                    initial_window_id: ContextWindowId::new_uuid_v7().to_string(),
+                    initial_window_id: ContextWindowId::new_uuid_v7(),
                     runtime_workspace_roots: None,
                     metadata: ThreadPersistenceMetadata {
                         cwd: None,
@@ -463,7 +463,7 @@ mod tests {
             history_mode,
             history_base: None,
             subagent_history_start_ordinal: None,
-            initial_window_id: ContextWindowId::new_uuid_v7().to_string(),
+            initial_window_id: ContextWindowId::new_uuid_v7(),
             runtime_workspace_roots: None,
             metadata: thread_metadata(),
         }
@@ -1007,10 +1007,9 @@ impl ThreadStore for InMemoryThreadStore {
                     page.items
                         .retain(|thread| thread.parent_thread_id == Some(parent_thread_id));
                 }
-                Some(ThreadRelationFilter::AttachedThreadsOf(_)) => {
-                    return Err(ThreadStoreError::Unsupported {
-                        operation: "attached threads",
-                    });
+                Some(ThreadRelationFilter::AttachedThreadsOf(parent)) => {
+                    page.items
+                        .retain(|thread| thread.attached_to_thread_id == Some(parent));
                 }
                 Some(ThreadRelationFilter::DescendantsOf(ancestor_thread_id)) => {
                     let mut subtree = HashSet::from([ancestor_thread_id]);
@@ -1033,7 +1032,10 @@ impl ThreadStore for InMemoryThreadStore {
                             && subtree.contains(&thread.thread_id)
                     });
                 }
-                None => {}
+                Some(ThreadRelationFilter::IncludeAttached) => {}
+                None => page
+                    .items
+                    .retain(|thread| thread.attached_to_thread_id.is_none()),
             }
             if let Some(section) = params.section.as_ref() {
                 page.items.retain(|thread| {
@@ -1132,6 +1134,7 @@ fn stored_thread_from_state(
             .and_then(|metadata| metadata.rollout_path.clone())
             .or(rollout_path),
         forked_from_id: created.forked_from_id,
+        attached_to_thread_id: created.forked_from_id.filter(|_| created.attached_thread),
         parent_thread_id: created.parent_thread_id,
         preview: metadata
             .and_then(|metadata| metadata.preview.clone())

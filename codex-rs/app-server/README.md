@@ -516,6 +516,12 @@ Read the selection from `threadSettings.disabledPluginIds` in
 across resume. Forks restore the selection from the history retained at the
 requested fork boundary.
 
+# Environment settings
+
+`turn/settings/update` can replace the environments used by later steps of the running turn; an already-started step and future turns are unchanged. `thread/settings/update` changes the selection for future turns without affecting the running turn. Both accept the same `environments` list as `turn/start`: omission or `null` keeps the selection, and `[]` clears it. A thread settings request that provides `cwd` without an explicit environment list selects the default environments for that directory. Selected environments inherit the thread's configuration.
+
+`thread/settings/update` returns success after Core accepts the update, including an unchanged selection. Rejections are returned as request errors. `thread/settings/updated` reports effective changes, including the ordered `environments` selection, and is not a per-request acknowledgment. Updating both scopes requires two separate requests; they are not atomic.
+
 # Deprecated thread personality setting
 
 `thread/start`, `thread/resume`, `thread/settings/update`, and `turn/start` still
@@ -660,20 +666,26 @@ managers using the same home and network configuration within the process and
 cannot be undone by a later connection that omits the capability.
 
 - `account/gatewayOAuth/read` returns the selected `providerId`,
-  `providerName`, `required`, `status`, and `error`. `required` indicates that this
+  `providerName`, `required`, `supportsDeviceAuth`, `status`, and `error`. `required` indicates that this
   provider uses gateway OAuth, including when already signed in. With a credential
   exporter, `required` is false and `status` is null. This read does not refresh
-  tokens or open a browser.
+  tokens or open a browser. `supportsDeviceAuth` means a
+  device authorization endpoint is configured. Older servers omit this field.
   `notReady` means credentials are not ready. `succeeded` means saved credentials
   are locally usable, not that a gateway request has been verified. Reads observe
   usable replacement credentials saved by another process sharing the same home.
-- `account/gatewayOAuth/login` starts authorization and returns `{}` after
-  the credential has been saved. Providers requiring OpenAI authentication need a
-  primary account first. A second login request fails while a login is active.
+- `account/gatewayOAuth/login` starts browser authorization and returns
+  `{"prompt": null}` after saving the credential. Providers requiring OpenAI
+  authentication need a primary account first. A second login request fails
+  while a login is active.
   The initiating connection receives a `started` notification with `authUrl`; the
   client must open that URL in a browser that can reach the server callback port.
-  Other status notifications set `authUrl` to null. Login is rejected if the
-  initiating connection opted out of `account/gatewayOAuth/changed` notifications.
+  Pass `deviceAuth: true` to use device authorization. If the saved credential
+  can be reused or refreshed, `prompt` is null. Otherwise it returns a
+  `prompt` with `verificationUrl`, `userCode`, and `loginId` before approval.
+  The initiating connection receives `account/gatewayOAuth/changed` with that
+  login ID when the attempt succeeds or fails. Login requires the connection
+  to accept these notifications.
 - `account/gatewayOAuth/cancel` cancels the calling connection's login and returns
   `{}` after the active login releases its slot, so the client can immediately
   start another login. Closing that connection also cancels its login and releases
@@ -684,7 +696,7 @@ cannot be undone by a later connection that omits the capability.
   default. Clients can read readiness when connecting and after
   changing configuration. Notifications follow the standard per-connection
   `optOutNotificationMethods` setting.
-  These payloads never contain credentials.
+  These payloads never contain access tokens, refresh tokens, or the device grant credential.
 
 Read and login accept an optional `modelProvider`, for example
 `{"modelProvider": "my_gateway"}`. Omitted params, null params, and an omitted or
@@ -755,13 +767,23 @@ Omitted or null cursors preserve normal first-page behavior. Continue anchored
 pages with the returned opaque string `nextCursor`; response fields and
 `backwardsCursor` semantics are unchanged.
 
-Experimental clients can set `"deferOutput": {"commandExecution": true}`
-with a `turnId`. Omitted or false options keep the full output. Unknown fields in
-`deferOutput` are ignored.
-For a completed command with a recorded completion time, exit code zero, and
-nonempty saved output, the entry returns `outputDeferred: true` and
-`item.aggregatedOutput: null`. Use `thread/items/read` with that turn and item ID
-to retrieve the full output. All other entries retain their recorded output.
+Experimental clients can request `"deferOutput": {"commandExecution": true, "mcpToolCall": true}`
+with a `turnId`. Each option applies independently to items with a recorded
+completion time and defaults to false. The server ignores unknown options.
+
+- `commandExecution` returns `item.aggregatedOutput: null` for a successful command with
+  exit code zero and nonempty saved output.
+- `mcpToolCall` returns `item.result.content: []` for a successful tool call with
+  nonempty output made up entirely of plain, unannotated text blocks. Calls with
+  an app resource URI or UI, result metadata, structured content, non-text blocks, or
+  text beginning with a JSON object, array, or Markdown fence retain the full result.
+  Connector identity stays on the item when its output is deferred.
+  The built-in `codex_app` server also keeps its results inline because Desktop
+  renders those calls as native tools, including terminal reads.
+
+Both forms set `outputDeferred: true`. Use `thread/items/read` with the turn
+and item ID to retrieve the saved output. For MCP results over the 64 KiB
+history limit, this returns the bounded preview saved at completion.
 
 ## Workspace switching (experimental)
 

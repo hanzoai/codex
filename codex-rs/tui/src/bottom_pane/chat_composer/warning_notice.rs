@@ -1,5 +1,5 @@
 //! Fit warning counts and the configured warnings shortcut into the existing passive hint row.
-//! Interactive hints retain priority. Shared status content wraps beside the warning.
+//! Interactive hints retain priority. Warnings occupy the trailing edge of the hints row.
 //! Only the count and warning label receive an amber accent; surrounding hints stay muted.
 
 use super::*;
@@ -64,6 +64,17 @@ impl ChatComposer {
     }
 
     pub(super) fn warning_notice(&self, count: usize, width: u16) -> Line<'static> {
+        let [full, compact, count] = self.warning_labels(count);
+        if full.width() <= usize::from(width) {
+            return full;
+        }
+        if compact.width() <= usize::from(width) {
+            return compact;
+        }
+        truncate_line_with_ellipsis_if_overflow(count, usize::from(width))
+    }
+
+    pub(super) fn warning_labels(&self, count: usize) -> [Line<'static>; 3] {
         let plural = if count == 1 { "" } else { "s" };
         let accent = crate::style::warning_notice_style();
         let secondary = crate::style::secondary_text_style();
@@ -80,9 +91,6 @@ impl ChatComposer {
         .style(secondary);
         full.extend(key_hint::key_label_spans(&shortcut));
         full.push_span(" to view");
-        if full.width() <= usize::from(width) {
-            return full;
-        }
         let mut compact = Line::from(vec![
             "⚠ ".into(),
             Span::styled(count.to_string(), accent),
@@ -90,13 +98,9 @@ impl ChatComposer {
         ])
         .style(secondary);
         compact.extend(key_hint::key_label_spans(&shortcut));
-        if compact.width() <= usize::from(width) {
-            return compact;
-        }
-        truncate_line_with_ellipsis_if_overflow(
-            Line::from(vec!["⚠ ".into(), Span::styled(count.to_string(), accent)]).style(secondary),
-            usize::from(width),
-        )
+        let count =
+            Line::from(vec!["⚠ ".into(), Span::styled(count.to_string(), accent)]).style(secondary);
+        [full, compact, count]
     }
 }
 
