@@ -23,6 +23,7 @@ mod route_aware_client_pool;
 mod route_aware_redirect;
 mod tls_backend_fallback;
 mod transport;
+pub mod zap_transport;
 
 pub use crate::chatgpt_cloudflare_cookies::with_chatgpt_cloudflare_cookie_store;
 pub use crate::chatgpt_hosts::is_allowed_chatgpt_host;
@@ -101,6 +102,9 @@ pub use crate::windows_tls::build_windows_platform_tls_config;
 /// Validates HTTPS or loopback HTTP endpoints, rejecting userinfo and fragments.
 /// Errors identify the caller-supplied field without including the URL.
 pub fn validate_endpoint_url(value: &str, field: &str) -> Result<Url, String> {
+    if zap_transport::is_zap_url(value) {
+        return zap_transport::validate_zap_endpoint_url(value, field);
+    }
     let url = Url::parse(value).map_err(|_| format!("invalid {field} URL"))?;
     let loopback = match url.host() {
         Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),

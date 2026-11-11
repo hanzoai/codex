@@ -328,7 +328,10 @@ pub(crate) async fn run_turn(
         let hints = handle.route(&turn_context.sub_id, request).await;
         if !hints.is_empty() {
             if let Some(routed_model) = hints.get("kai.model")
-                && hanzo::model::is_hybrid_router(&turn_context.capture_current_model_info().slug)
+                && (hints.contains_key("kai.backend")
+                    || hanzo::model::is_hybrid_router(
+                        &turn_context.capture_current_model_info().slug,
+                    ))
             {
                 let mut current = turn_context.next_step_settings.load().as_ref().clone();
                 Arc::make_mut(&mut current.model_info).slug = routed_model.clone();

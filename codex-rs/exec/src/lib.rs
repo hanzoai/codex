@@ -612,6 +612,20 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         None // No OSS mode enabled
     };
 
+    // Support `ollama/<model>` and `lmstudio/<model>` prefixes directly via `-m`.
+    let mut model_provider = model_provider;
+    let model_cli_arg = if let Some(ref raw_model) = model_cli_arg
+        && let Some((prefixed_provider, stripped_model)) =
+            codex_utils_oss::split_local_model_prefix(raw_model)
+    {
+        if model_provider.is_none() {
+            model_provider = Some(prefixed_provider.to_string());
+        }
+        Some(stripped_model)
+    } else {
+        model_cli_arg
+    };
+
     // When using `--oss`, let the bootstrapper pick the model based on selected provider
     let model = if let Some(model) = model_cli_arg {
         Some(model)
@@ -961,11 +975,12 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             last_message_file.clone(),
         )),
     };
-    if oss {
-        // We're in the oss section, so provider_id should be Some
-        // Let's handle None case gracefully though just in case
-        let provider_id = match model_provider.as_ref() {
+    if oss || codex_utils_oss::is_local_oss_provider(&config.model_provider_id) {
+        let provider_id = match model_provider.as_deref() {
             Some(id) => id,
+            None if codex_utils_oss::is_local_oss_provider(&config.model_provider_id) => {
+                config.model_provider_id.as_str()
+            }
             None => {
                 error!("OSS provider unexpectedly not set when oss flag is used");
                 return Err(anyhow::anyhow!(

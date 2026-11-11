@@ -22,7 +22,7 @@ serde_json = { workspace = true }
 serde_urlencoded = "0.7"
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "time", "sync"] }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 url = { workspace = true }

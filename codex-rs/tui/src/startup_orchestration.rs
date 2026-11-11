@@ -474,6 +474,20 @@ pub(super) async fn run_main_inner(
         None
     };
 
+    // Support `ollama/<model>` and `lmstudio/<model>` prefixes directly via `-m`.
+    let mut model_provider_override = model_provider_override;
+    let resolved_cli_model = if let Some(ref raw_model) = cli.model
+        && let Some((prefixed_provider, stripped_model)) =
+            codex_utils_oss::split_local_model_prefix(raw_model)
+    {
+        if model_provider_override.is_none() {
+            model_provider_override = Some(prefixed_provider.to_string());
+        }
+        Some(stripped_model)
+    } else {
+        cli.model.clone()
+    };
+
     // Pass the --oss provider to the embedded app-server so catalog reloads keep
     // the launch choice after workspace requirements are removed.
     if let Some(provider) = &model_provider_override {
@@ -484,8 +498,8 @@ pub(super) async fn run_main_inner(
     }
 
     // When using `--oss`, let the bootstrapper pick the model based on selected provider
-    let model = if let Some(model) = &cli.model {
-        Some(model.clone())
+    let model = if let Some(model) = resolved_cli_model {
+        Some(model)
     } else if cli.oss {
         // Use the provider from model_provider_override
         model_provider_override
@@ -948,11 +962,14 @@ pub(super) async fn run_main_inner(
     let feedback_layer = feedback.logger_layer();
     let feedback_metadata_layer = feedback.metadata_layer();
 
-    if cli.oss && model_provider_override.is_some() {
-        // We're in the oss section, so provider_id should be Some
-        // Let's handle None case gracefully though just in case
-        let provider_id = match model_provider_override.as_ref() {
+    if (cli.oss && model_provider_override.is_some())
+        || codex_utils_oss::is_local_oss_provider(&config.model_provider_id)
+    {
+        let provider_id = match model_provider_override.as_deref() {
             Some(id) => id,
+            None if codex_utils_oss::is_local_oss_provider(&config.model_provider_id) => {
+                config.model_provider_id.as_str()
+            }
             None => {
                 error!("OSS provider unexpectedly not set when oss flag is used");
                 return Err(std::io::Error::other(

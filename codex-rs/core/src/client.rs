@@ -1987,7 +1987,7 @@ impl ResponsesHttpExecutor<'_> {
         let mut provider_auth_recovery_attempted = false;
         let mut pending_retry = PendingUnauthorizedRetry::default();
         loop {
-            let client_setup = self
+            let mut client_setup = self
                 .client
                 .current_client_setup(ClientRouting::Workspace)
                 .await?;
@@ -1995,6 +1995,19 @@ impl ResponsesHttpExecutor<'_> {
                 Some(owner) != client_setup.auth_owner.as_ref() || !owner.is_current()
             }) {
                 return Err(CodexErr::TurnAborted);
+            }
+            if let Some(override_base_url) = responses_metadata
+                .extra_metadata_value("kai.base_url")
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                && override_base_url.trim_end_matches('/')
+                    != client_setup.api_provider.base_url.trim_end_matches('/')
+            {
+                client_setup.api_provider.base_url = override_base_url.to_string();
+                if !hanzo::is_hanzo(Some(override_base_url)) {
+                    client_setup.api_auth = Arc::new(codex_api::NoopAuthProvider);
+                    client_setup.auth = None;
+                }
             }
             let include_internal = self
                 .client
@@ -2598,8 +2611,13 @@ impl ModelClientSession {
     ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
         match wire_api {
-            WireApi::Responses => {
-                if self.client.responses_websocket_enabled() {
+            WireApi::Responses | WireApi::Chat => {
+                if wire_api == WireApi::Responses
+                    && responses_metadata
+                        .extra_metadata_value("kai.base_url")
+                        .is_none()
+                    && self.client.responses_websocket_enabled()
+                {
                     let request_trace = current_span_w3c_trace_context();
                     match self
                         .stream_responses_websocket(

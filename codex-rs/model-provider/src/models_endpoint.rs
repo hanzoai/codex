@@ -299,6 +299,23 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
             || self.provider_info.experimental_bearer_token.is_some()
     }
 
+    fn supports_dynamic_models(&self) -> bool {
+        self.provider_info.model_catalog_url.is_none()
+            && (hanzo::is_hanzo(self.provider_info.base_url.as_deref())
+                || (!self.provider_info.requires_openai_auth
+                    && !self.provider_info.is_openai()
+                    && !codex_api::is_azure_responses_provider(
+                        &self.provider_info.name,
+                        self.provider_info.base_url.as_deref(),
+                    )
+                    && self.provider_info.base_url.is_some()))
+    }
+
+    fn prefers_authoritative_dynamic_models(&self) -> bool {
+        !hanzo::is_hanzo(self.provider_info.base_url.as_deref())
+            && self.supports_dynamic_models()
+    }
+
     fn identity(&self) -> Option<String> {
         let auth = self
             .auth_manager

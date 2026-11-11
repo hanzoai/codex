@@ -327,6 +327,10 @@ impl CodexResponsesMetadata {
         self.request_kind.is_some()
     }
 
+    pub(crate) fn extra_metadata_value(&self, key: &str) -> Option<&str> {
+        self.extra.get(key).map(String::as_str)
+    }
+
     pub(crate) fn turn_metadata_json(&self) -> Option<String> {
         to_ascii_json_string(&self.turn_metadata_payload()).ok()
     }

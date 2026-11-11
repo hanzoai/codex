@@ -76,16 +76,18 @@ impl<T: HttpTransport> ModelsClient<T> {
         let (body, header_etag) = self
             .list_models_raw(request_url, extra_headers, response_body_limit_bytes)
             .await?;
-        let ModelsResponse { models } =
-            serde_json::from_slice::<ModelsResponse>(&body).map_err(|e| {
+        let models = match serde_json::from_slice::<ModelsResponse>(&body) {
+            Ok(ModelsResponse { models }) => models,
+            Err(primary_err) => decode_dynamic_models_response(&body).ok_or_else(|| {
                 ApiError::Stream(format!(
                     "failed to decode models response: {:?} at line {} column {} (body: {} bytes)",
-                    e.classify(),
-                    e.line(),
-                    e.column(),
+                    primary_err.classify(),
+                    primary_err.line(),
+                    primary_err.column(),
                     body.len()
                 ))
-            })?;
+            })?,
+        };
 
         Ok((models, header_etag))
     }
@@ -122,6 +124,138 @@ impl<T: HttpTransport> ModelsClient<T> {
 
         Ok((resp.body, header_etag))
     }
+}
+
+fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
+    use codex_protocol::config_types::ReasoningSummary;
+    use codex_protocol::openai_models::ConfigShellToolType;
+    use codex_protocol::openai_models::ModelVisibility;
+    use codex_protocol::openai_models::ReasoningEffortPreset;
+    use codex_protocol::openai_models::TruncationPolicyConfig;
+    use codex_protocol::openai_models::WebSearchToolType;
+    use codex_protocol::openai_models::default_input_modalities;
+    use serde_json::Value;
+
+    let root: Value = serde_json::from_slice(body).ok()?;
+    let entries = if let Some(arr) = root.get("data").and_then(Value::as_array) {
+        arr
+    } else if let Some(arr) = root.get("models").and_then(Value::as_array) {
+        arr
+    } else if let Some(arr) = root.as_array() {
+        arr
+    } else {
+        return None;
+    };
+
+    let efforts: Vec<ReasoningEffortPreset> = hanzo::effort::EFFORTS
+        .iter()
+        .filter_map(|(name, description)| {
+            Some(ReasoningEffortPreset {
+                effort: name.parse().ok()?,
+                description: (*description).to_string(),
+            })
+        })
+        .collect();
+    let default_effort = hanzo::effort::DEFAULT.parse().ok();
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(entries.len());
+    for (idx, item) in entries.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let Some(raw_id) = obj
+            .get("id")
+            .or_else(|| obj.get("slug"))
+            .or_else(|| obj.get("name"))
+            .or_else(|| obj.get("model"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let slug = raw_id.trim();
+        if slug.is_empty() || !seen.insert(slug.to_string()) {
+            continue;
+        }
+        let known = hanzo::catalog::find(slug);
+        let display_name = obj
+            .get("display_name")
+            .or_else(|| obj.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| known.map_or_else(|| slug.to_string(), |m| m.name.to_string()));
+        let description = obj
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| known.map(|m| m.name.to_string()));
+        let window = obj
+            .get("context_window")
+            .or_else(|| obj.get("context_length"))
+            .or_else(|| obj.get("max_model_len"))
+            .and_then(Value::as_i64)
+            .filter(|&w| w > 0)
+            .unwrap_or_else(|| known.map_or(272_000, |m| m.window));
+
+        out.push(ModelInfo {
+            guardian: None,
+            slug: slug.to_string(),
+            display_name,
+            description,
+            default_reasoning_level: default_effort.clone(),
+            supported_reasoning_levels: efforts.clone(),
+            shell_type: ConfigShellToolType::UnifiedExec,
+            visibility: ModelVisibility::List,
+            supported_in_api: true,
+            priority: 100 + idx as i32,
+            additional_speed_tiers: Vec::new(),
+            service_tiers: Vec::new(),
+            default_service_tier: None,
+            available_access_programs: None,
+            availability_nux: None,
+            upgrade: None,
+            model_messages: None,
+            include_skills_usage_instructions: true,
+            include_plugin_usage_instructions: false,
+            include_apps_usage_instructions: false,
+            supports_reasoning_summary_parameter: true,
+            default_reasoning_summary: ReasoningSummary::Auto,
+            support_verbosity: false,
+            default_verbosity: None,
+            apply_patch_tool_type: None,
+            web_search_tool_type: WebSearchToolType::Text,
+            web_search_provider: None,
+            truncation_policy: TruncationPolicyConfig::bytes(10_000),
+            supports_image_detail_original: false,
+            context_window: Some(window),
+            max_context_window: Some(window),
+            auto_compact_token_limit: None,
+            comp_hash: None,
+            effective_context_window_percent: 95,
+            experimental_supported_tools: Vec::new(),
+            input_modalities: match known {
+                Some(m) if !m.vision => vec![codex_protocol::openai_models::InputModality::Text],
+                _ => default_input_modalities(),
+            },
+            supports_search_tool: false,
+            supports_experimental_context: false,
+            use_responses_lite: false,
+            supports_reasoning_effort_updates: false,
+            node_repl_auto_review_required: false,
+            node_repl_disabled: false,
+            auto_review_model_override: None,
+            model_specialty: None,
+            tool_mode: None,
+            multi_agent_version: None,
+            multi_agent_reasoning_effort: None,
+        });
+    }
+
+    Some(out)
 }
 
 #[cfg(test)]
@@ -430,5 +564,25 @@ mod tests {
 
         assert_eq!(models.len(), 0);
         assert_eq!(etag, Some("\"abc\"".to_string()));
+    }
+
+    #[test]
+    fn decodes_openai_and_ollama_dynamic_models() {
+        let openai_body = br#"{"object":"list","data":[{"id":"moonshotai/kimi-k2.5","context_window":262144},{"id":"qwen/qwen3-coder","max_model_len":131072}]}"#;
+        let models = decode_dynamic_models_response(openai_body).expect("openai models");
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].slug, "moonshotai/kimi-k2.5");
+        assert_eq!(models[0].context_window, Some(262_144));
+        assert_eq!(models[0].visibility, codex_protocol::openai_models::ModelVisibility::List);
+        assert!(models[0].include_skills_usage_instructions);
+        assert!(!models[0].supported_reasoning_levels.is_empty());
+        assert_eq!(models[1].slug, "qwen/qwen3-coder");
+        assert_eq!(models[1].context_window, Some(131_072));
+
+        let ollama_body = br#"{"models":[{"name":"deepseek-r1:32b"},{"name":"qwen3:8b"}]}"#;
+        let ollama = decode_dynamic_models_response(ollama_body).expect("ollama models");
+        assert_eq!(ollama.len(), 2);
+        assert_eq!(ollama[0].slug, "deepseek-r1:32b");
+        assert_eq!(ollama[1].slug, "qwen3:8b");
     }
 }

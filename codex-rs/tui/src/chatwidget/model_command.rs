@@ -149,22 +149,23 @@ fn resolve_model_command(chat: &ChatWidget, args: &str) -> Result<ModelCommand, 
                         names.join(", ")
                     ));
                 }
-                hanzo::model::Pick::None => {
-                    return Err(format!(
-                        "No model matches `{wanted}`. Use /model to see the list."
-                    ));
-                }
+                hanzo::model::Pick::None => wanted.trim().to_string(),
             }
         }
     };
-    let Some(model) =
-        chat.model_catalog.models.iter().find(|model| {
-            model.model == model_name && (args.model.is_none() || model.show_in_picker)
-        })
-    else {
-        return Err(format!(
-            "Model '{model_name}' is unavailable. Use /model to see available models."
-        ));
+    let synthesized;
+    let model = if let Some(existing) = chat
+        .model_catalog
+        .models
+        .iter()
+        .find(|model| model.model == model_name)
+    {
+        existing
+    } else {
+        let mut info = codex_models_manager::model_info::model_info_from_slug(&model_name);
+        info.visibility = codex_protocol::openai_models::ModelVisibility::List;
+        synthesized = codex_protocol::openai_models::ModelPreset::from(info);
+        &synthesized
     };
     Ok(ModelCommand {
         model: model.model.clone(),

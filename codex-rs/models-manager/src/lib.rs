@@ -29,7 +29,7 @@ pub fn bundled_models_response()
     let served = hanzo::catalog::MODELS
         .iter()
         .map(|model| model.slug)
-        .filter(|slug| !slug.contains('/') && *slug != default);
+        .filter(|slug| *slug != default);
     let mut models: Vec<_> = std::iter::once(default)
         .chain(served)
         .enumerate()

@@ -174,6 +174,9 @@ fn request_body_for_trace(req: &Request) -> String {
 impl HttpTransport for ReqwestTransport {
     async fn execute(&self, req: Request) -> Result<Response, TransportError> {
         self.trace_request(&req);
+        if crate::zap_transport::is_zap_url(&req.url) {
+            return crate::zap_transport::execute_zap(req).await;
+        }
 
         let url = req.url.clone();
         let response_body_limit_bytes = req.response_body_limit_bytes;
@@ -214,6 +217,9 @@ impl HttpTransport for ReqwestTransport {
 
     async fn stream(&self, req: Request) -> Result<StreamResponse, TransportError> {
         self.trace_request(&req);
+        if crate::zap_transport::is_zap_url(&req.url) {
+            return crate::zap_transport::stream_zap(req).await;
+        }
 
         let url = req.url.clone();
         let response_body_limit_bytes = req.response_body_limit_bytes;

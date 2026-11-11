@@ -79,6 +79,18 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
         false
     }
 
+    /// Returns whether this endpoint serves a live `/models` catalog (OpenAI `/v1/models`,
+    /// Ollama, ZAP, or Hanzo gateway) regardless of OpenAI API-key rollout flags.
+    fn supports_dynamic_models(&self) -> bool {
+        false
+    }
+
+    /// Returns whether live `/models` entries replace the bundled catalog (true for local/custom
+    /// providers) rather than merging into the bundled Hanzo catalog.
+    fn prefers_authoritative_dynamic_models(&self) -> bool {
+        false
+    }
+
     /// Fetches the latest remote model catalog and optional ETag.
     fn list_models<'a>(
         &'a self,
@@ -929,7 +941,8 @@ impl OpenAiModelsManager {
 
     // A runtime opt-out must hide catalogs fetched before the flag was disabled, too.
     fn api_key_discovery_disabled(&self) -> bool {
-        self.uses_api_key_auth()
+        !self.endpoint_client.supports_dynamic_models()
+            && self.uses_api_key_auth()
             && !self.endpoint_client.has_command_auth()
             && (!self.endpoint_client.supports_api_key_models()
                 || !self.settings.api_key_model_discovery_enabled())
@@ -944,7 +957,8 @@ impl OpenAiModelsManager {
     }
 
     async fn should_refresh_models(&self) -> bool {
-        self.endpoint_client.uses_codex_backend().await
+        self.endpoint_client.supports_dynamic_models()
+            || self.endpoint_client.uses_codex_backend().await
             || self.endpoint_client.has_command_auth()
             || self.supports_api_key_discovery()
     }
@@ -969,24 +983,53 @@ impl OpenAiModelsManager {
             .models
             .iter()
             .any(|model| model.visibility == ModelVisibility::List)
-            && (self.supports_api_key_discovery()
-                || self.auth_manager.as_ref().is_some_and(|auth_manager| {
-                    auth_manager
-                        .auth_mode()
-                        .is_some_and(AuthMode::has_chatgpt_account)
-                }));
+            && (self.endpoint_client.prefers_authoritative_dynamic_models()
+                || self.supports_api_key_discovery()
+                || (!self.endpoint_client.supports_dynamic_models()
+                    && self.auth_manager.as_ref().is_some_and(|auth_manager| {
+                        auth_manager
+                            .auth_mode()
+                            .is_some_and(AuthMode::has_chatgpt_account)
+                    })));
         if !remote_only && let Some(mut models) = self.catalog_source.fallback_models() {
-            for model in std::mem::take(&mut entry.models) {
+            for mut model in std::mem::take(&mut entry.models) {
                 if let Some(index) = models
                     .iter()
                     .position(|existing| existing.slug == model.slug)
                 {
+                    if model.model_messages.is_none() {
+                        let existing = &models[index];
+                        model.model_messages.clone_from(&existing.model_messages);
+                        model.priority = existing.priority;
+                        if model.description.is_none() {
+                            model.description.clone_from(&existing.description);
+                        }
+                        if model.additional_speed_tiers.is_empty() {
+                            model
+                                .additional_speed_tiers
+                                .clone_from(&existing.additional_speed_tiers);
+                        }
+                        if model.service_tiers.is_empty() {
+                            model.service_tiers.clone_from(&existing.service_tiers);
+                        }
+                    }
                     models[index] = model;
                 } else {
+                    if model.model_messages.is_none() {
+                        let fallback_info = model_info::model_info_from_slug(&model.slug);
+                        model.model_messages = fallback_info.model_messages;
+                    }
                     models.push(model);
                 }
             }
             entry.models = models;
+        } else {
+            for model in &mut entry.models {
+                if model.model_messages.is_none() {
+                    let fallback_info = model_info::model_info_from_slug(&model.slug);
+                    model.model_messages = fallback_info.model_messages;
+                }
+            }
         }
         *current = catalog;
         true

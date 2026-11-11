@@ -331,7 +331,7 @@ fn proto_string_map(values: HashMap<String, RedactedString>) -> proto::StringMap
 #[cfg(test)]
 fn proto_wire_api(wire_api: WireApi) -> proto::WireApi {
     match wire_api {
-        WireApi::Responses => proto::WireApi::Responses,
+        WireApi::Responses | WireApi::Chat => proto::WireApi::Responses,
     }
 }
 

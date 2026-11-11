@@ -104,22 +104,18 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
     ModelInfo {
         slug: slug.to_string(),
         display_name: known.map_or_else(|| slug.to_string(), |model| model.name.to_string()),
-        description: None,
-        // Hanzo: a model Hanzo serves offers hanzo::effort's table and starts at its default.
-        default_reasoning_level: known.and_then(|_| hanzo::effort::DEFAULT.parse().ok()),
-        supported_reasoning_levels: if known.is_some() {
-            hanzo::effort::EFFORTS
-                .iter()
-                .filter_map(|(name, description)| {
-                    Some(codex_protocol::openai_models::ReasoningEffortPreset {
-                        effort: name.parse().ok()?,
-                        description: (*description).to_string(),
-                    })
+        description: known.map(|model| model.name.to_string()),
+        // Hanzo: every model (curated or dynamic /v1/models / local) gets reasoning-effort controls.
+        default_reasoning_level: hanzo::effort::DEFAULT.parse().ok(),
+        supported_reasoning_levels: hanzo::effort::EFFORTS
+            .iter()
+            .filter_map(|(name, description)| {
+                Some(codex_protocol::openai_models::ReasoningEffortPreset {
+                    effort: name.parse().ok()?,
+                    description: (*description).to_string(),
                 })
-                .collect()
-        } else {
-            Vec::new()
-        },
+            })
+            .collect(),
         shell_type: ConfigShellToolType::UnifiedExec,
         visibility: ModelVisibility::None,
         supported_in_api: true,
@@ -147,7 +143,7 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         } else {
             local_model_messages()
         }),
-        include_skills_usage_instructions: known.is_some(),
+        include_skills_usage_instructions: true,
         include_plugin_usage_instructions: false,
         include_apps_usage_instructions: false,
         supports_reasoning_summary_parameter: true,

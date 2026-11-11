@@ -13,6 +13,28 @@ pub fn get_default_model_for_oss_provider(provider_id: &str) -> Option<&'static 
     }
 }
 
+/// Returns true when `provider_id` is a local on-demand pull provider (`ollama` or `lmstudio`).
+pub fn is_local_oss_provider(provider_id: &str) -> bool {
+    matches!(provider_id, LMSTUDIO_OSS_PROVIDER_ID | OLLAMA_OSS_PROVIDER_ID)
+}
+
+/// Parses `ollama/<model>` or `lmstudio/<model>` prefixes so users can run any local model
+/// directly with `-m ollama/qwen3:8b` or `-m lmstudio/qwen3-coder` and auto-pull on demand.
+pub fn split_local_model_prefix(model: &str) -> Option<(&'static str, String)> {
+    let trimmed = model.trim();
+    if let Some(rest) = trimmed.strip_prefix("ollama/")
+        && !rest.trim().is_empty()
+    {
+        return Some((OLLAMA_OSS_PROVIDER_ID, rest.trim().to_string()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("lmstudio/")
+        && !rest.trim().is_empty()
+    {
+        return Some((LMSTUDIO_OSS_PROVIDER_ID, rest.trim().to_string()));
+    }
+    None
+}
+
 /// Ensures the specified OSS provider is ready (models downloaded, service reachable).
 pub async fn ensure_oss_provider_ready(
     provider_id: &str,

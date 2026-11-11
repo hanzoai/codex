@@ -285,6 +285,9 @@ fn create_client_for_route_with_builder(
     builder: HttpClientBuilder,
     legacy_fallback: bool,
 ) -> Result<HttpClient, BuildRouteAwareHttpClientError> {
+    if codex_http_client::zap_transport::is_zap_url(request_url) {
+        return Ok(build_default_client(builder));
+    }
     if http_client_factory.network_policy().is_managed()
         || http_client_factory.protects_sensitive_headers()
         || !legacy_fallback

@@ -110,6 +110,16 @@ pub type AuthRefreshFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>
 /// Shared auth handle passed through API clients.
 pub type SharedAuthProvider = Arc<dyn AuthProvider>;
 
+/// Auth provider that attaches no credentials (used for unauthenticated local backends).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoopAuthProvider;
+
+impl AuthProvider for NoopAuthProvider {
+    fn add_auth_headers(&self, _headers: &mut HeaderMap) -> Result<(), AuthError> {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentIdentityTelemetry {
     pub agent_id: String,
