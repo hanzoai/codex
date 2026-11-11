@@ -1052,10 +1052,10 @@ async fn get_model_info_uses_fallback_for_bundled_models_when_chatgpt_remote_is_
     let manager = openai_manager_for_tests(codex_home.path().to_path_buf(), endpoint);
     let bundled_slug = load_remote_models_from_file()
         .expect("bundled models should parse")
-        .first()
-        .expect("bundled models should contain at least one model")
-        .slug
-        .clone();
+        .into_iter()
+        .find(|m| hanzo::catalog::find(&m.slug).is_none())
+        .expect("bundled models should contain at least one non-Hanzo model")
+        .slug;
 
     manager
         .refresh_available_models(

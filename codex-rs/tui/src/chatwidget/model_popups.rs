@@ -4,6 +4,7 @@
 //! into another, especially while Plan mode is active.
 
 use super::*;
+use crate::bottom_pane::SearchMode;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
 
 const ULTRA_REASONING_CONCURRENCY_WARNING_THRESHOLD: usize = 8;
@@ -13,6 +14,110 @@ pub(super) const MODEL_SELECTION_VIEW_ID: &str = "model-selection";
 pub(super) const ALL_MODELS_SELECTION_VIEW_ID: &str = "all-models-selection";
 
 impl ChatWidget {
+    pub(crate) fn set_active_model_provider(&mut self, provider_id: &str) {
+        self.config.model_provider_id = provider_id.to_string();
+        if let Some(provider) = self.config.model_providers.get(provider_id).cloned() {
+            self.config.model_provider = provider;
+        } else if provider_id == "local" {
+            self.config.model_provider = codex_model_provider_info::ModelProviderInfo {
+                name: "Hanzo Engine (local)".to_string(),
+                base_url: Some("http://127.0.0.1:1234/v1".to_string()),
+                wire_api: codex_model_provider_info::WireApi::Responses,
+                requires_openai_auth: false,
+                supports_websockets: false,
+                ..Default::default()
+            };
+        }
+    }
+
+    pub(crate) fn refresh_models_after_provider_switch(&mut self) {
+        let request_id = uuid::Uuid::new_v4();
+        self.model_popup_request_id = Some(request_id);
+        self.app_event_tx.send(AppEvent::FetchModels { request_id });
+    }
+
+    pub(super) fn qualified_picker_model(&self, preset: &ModelPreset) -> String {
+        match preset.model_provider.as_deref() {
+            Some(provider) if provider != self.config.model_provider_id => {
+                format!("{provider}::{}", preset.model)
+            }
+            _ => preset.model.clone(),
+        }
+    }
+
+    fn is_current_picker_preset(&self, preset: &ModelPreset) -> bool {
+        preset.model.as_str() == self.current_model()
+            && preset
+                .model_provider
+                .as_deref()
+                .is_none_or(|provider| provider == self.config.model_provider_id)
+    }
+
+    fn prepare_picker_presets(&self, presets: Vec<ModelPreset>) -> (Vec<ModelPreset>, bool) {
+        let mut presets: Vec<ModelPreset> = presets
+            .into_iter()
+            .filter(|preset| preset.show_in_picker)
+            .collect();
+
+        let distinct_providers = presets
+            .iter()
+            .filter_map(|preset| preset.model_provider.as_deref())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let is_hanzo_context =
+            crate::app_server_session::models::is_hanzo_ecosystem_config(&self.config)
+                || presets.iter().any(|preset| {
+                    matches!(preset.model_provider.as_deref(), Some("hanzo" | "local"))
+                });
+
+        if is_hanzo_context {
+            let has_first_party = presets
+                .iter()
+                .any(|preset| hanzo::catalog::is_first_party(&preset.model));
+            for preset in &mut presets {
+                if preset.model_provider.is_none() && has_first_party {
+                    let provider = if hanzo::catalog::is_local_only(&preset.model) {
+                        "local"
+                    } else {
+                        self.config.model_provider_id.as_str()
+                    };
+                    preset.model_provider = Some(provider.to_string());
+                }
+            }
+            if has_first_party
+                && !presets
+                    .iter()
+                    .any(|preset| preset.model == "zen6-nano")
+            {
+                presets.push(crate::app_server_session::models::local_zen6_nano_preset());
+            }
+            if has_first_party && !self.local_settings.tui.show_third_party_models {
+                let current_model = self.current_model();
+                presets.retain(|preset| {
+                    let is_hanzo_cloud = match preset.model_provider.as_deref() {
+                        Some("hanzo") => true,
+                        None => self.config.model_provider_id == "hanzo",
+                        Some(_) => false,
+                    };
+                    !is_hanzo_cloud
+                        || hanzo::catalog::is_first_party(&preset.model)
+                        || Self::is_auto_model(&preset.model)
+                        || preset.model == current_model
+                });
+            }
+            if has_first_party || distinct_providers > 1 {
+                crate::app_server_session::models::sort_aggregated_models(&mut presets);
+            }
+            return (presets, has_first_party);
+        }
+
+        if distinct_providers > 1 {
+            crate::app_server_session::models::sort_aggregated_models(&mut presets);
+        }
+
+        (presets, false)
+    }
+
     /// Open a popup to choose a quick auto model. Selecting "All models"
     /// opens the full picker with every available preset.
     pub(crate) fn open_model_popup(&mut self) {
@@ -98,7 +203,7 @@ impl ChatWidget {
         }
 
         let normalized = trimmed.trim_end_matches('/');
-        if normalized == DEFAULT_OPENAI_BASE_URL {
+        if normalized == DEFAULT_OPENAI_BASE_URL || hanzo::is_hanzo(Some(trimmed)) {
             return None;
         }
 
@@ -110,15 +215,11 @@ impl ChatWidget {
             self.open_luna_reserve_model_popup(presets, MODEL_SELECTION_VIEW_ID);
             return;
         }
-        let presets: Vec<ModelPreset> = presets
-            .into_iter()
-            .filter(|preset| preset.show_in_picker)
-            .collect();
+        let (presets, _is_hanzo_context) = self.prepare_picker_presets(presets);
 
-        let current_model = self.current_model();
         let current_label = presets
             .iter()
-            .find(|preset| preset.model.as_str() == current_model)
+            .find(|preset| self.is_current_picker_preset(preset))
             .map(|preset| preset.display_name.clone())
             .unwrap_or_else(|| self.model_display_name().to_string());
 
@@ -134,14 +235,26 @@ impl ChatWidget {
         auto_presets.sort_by_key(|preset| Self::auto_model_order(&preset.model));
         let mut model_ids: Vec<String> = auto_presets
             .iter()
-            .map(|preset| preset.model.clone())
+            .map(|preset| self.qualified_picker_model(preset))
             .collect();
         let mut items: Vec<SelectionItem> = auto_presets
             .into_iter()
             .map(|preset| {
                 let description =
                     (!preset.description.is_empty()).then_some(preset.description.clone());
-                let model = preset.model.clone();
+                let category_tag = preset
+                    .model_provider
+                    .as_ref()
+                    .map(|provider| format!("[{provider}]"));
+                let search_value = Some(format!(
+                    "{} {} {} {}",
+                    preset.display_name,
+                    preset.model,
+                    preset.model_provider.as_deref().unwrap_or_default(),
+                    preset.description
+                ));
+                let qualified_model = self.qualified_picker_model(&preset);
+                let is_current = self.is_current_picker_preset(&preset);
                 let requires_advanced_selection =
                     Self::is_advanced_reasoning_effort(&preset.default_reasoning_effort)
                         || preset
@@ -159,24 +272,26 @@ impl ChatWidget {
                 } else {
                     let should_prompt_plan_mode_scope = self
                         .should_prompt_plan_mode_reasoning_scope(
-                            model.as_str(),
+                            qualified_model.as_str(),
                             Some(preset.default_reasoning_effort.clone()),
                         );
                     self.model_selection_actions(
-                        model.clone(),
+                        qualified_model.clone(),
                         Some(preset.default_reasoning_effort.clone()),
                         should_prompt_plan_mode_scope,
                     )
                 };
                 SelectionItem {
                     name: preset.display_name.clone(),
+                    category_tag,
                     description,
-                    is_current: model.as_str() == current_model,
+                    search_value,
+                    is_current,
                     secondary_action: if requires_advanced_selection {
                         None
                     } else {
                         self.session_model_selection_action(
-                            model.clone(),
+                            qualified_model,
                             Some(preset.default_reasoning_effort),
                         )
                     },
@@ -203,6 +318,7 @@ impl ChatWidget {
             items.push(SelectionItem {
                 name: "All models".to_string(),
                 description,
+                search_value: Some(format!("All models {current_label}")),
                 is_current,
                 actions,
                 dismiss_on_select: true,
@@ -220,6 +336,10 @@ impl ChatWidget {
                 view_id: Some(MODEL_SELECTION_VIEW_ID),
                 items,
                 header,
+                auto_number_shortcuts: false,
+                is_searchable: true,
+                search_mode: SearchMode::OnDemand(key_hint::plain(KeyCode::Char('/'))),
+                search_placeholder: Some("Type to filter models".to_string()),
                 ..SelectionViewParams::picker()
             },
         );
@@ -261,6 +381,7 @@ impl ChatWidget {
         presets: Vec<ModelPreset>,
         view_id: &'static str,
     ) {
+        let (presets, is_hanzo_context) = self.prepare_picker_presets(presets);
         if presets.is_empty() {
             self.bottom_pane.dismiss_view_by_id(view_id);
             self.add_info_message(
@@ -271,11 +392,26 @@ impl ChatWidget {
         }
 
         let mut items: Vec<SelectionItem> = Vec::new();
-        let model_ids = presets.iter().map(|preset| preset.model.clone()).collect();
+        let model_ids = presets
+            .iter()
+            .map(|preset| self.qualified_picker_model(preset))
+            .collect();
         for preset in presets.into_iter() {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
-            let is_current = preset.model.as_str() == self.current_model();
+            let category_tag = preset
+                .model_provider
+                .as_ref()
+                .map(|provider| format!("[{provider}]"));
+            let search_value = Some(format!(
+                "{} {} {} {}",
+                preset.display_name,
+                preset.model,
+                preset.model_provider.as_deref().unwrap_or_default(),
+                preset.description
+            ));
+            let is_current = self.is_current_picker_preset(&preset);
+            let qualified_model = self.qualified_picker_model(&preset);
             let direct_effort = match preset.supported_reasoning_efforts.as_slice() {
                 [] => Some(preset.default_reasoning_effort.clone()),
                 [option] => Some(option.effort.clone()),
@@ -293,10 +429,12 @@ impl ChatWidget {
             })];
             items.push(SelectionItem {
                 name: preset.display_name.clone(),
+                category_tag,
                 description,
+                search_value,
                 is_current,
                 secondary_action: direct_effort.and_then(|effort| {
-                    self.session_model_selection_action(preset.model.clone(), Some(effort))
+                    self.session_model_selection_action(qualified_model, Some(effort))
                 }),
                 actions,
                 dismiss_on_select: single_supported_effort,
@@ -305,13 +443,22 @@ impl ChatWidget {
             });
         }
 
-        let header = self.model_menu_header("Select Model and Effort", "");
+        let subtitle = if is_hanzo_context && !self.local_settings.tui.show_third_party_models {
+            "Press / to filter · Enable third-party cloud models in /config"
+        } else {
+            ""
+        };
+        let header = self.model_menu_header("Select Model and Effort", subtitle);
         self.show_model_selection_view(
             model_ids,
             SelectionViewParams {
                 view_id: Some(view_id),
                 items,
                 header,
+                auto_number_shortcuts: false,
+                is_searchable: true,
+                search_mode: SearchMode::OnDemand(key_hint::plain(KeyCode::Char('/'))),
+                search_placeholder: Some("Type to filter models".to_string()),
                 ..SelectionViewParams::picker()
             },
         );
@@ -553,7 +700,7 @@ impl ChatWidget {
 
         if choices.len() == 1 && advanced_choices.is_empty() {
             let selected_effort = choices.first().cloned();
-            let selected_model = preset.model;
+            let selected_model = self.qualified_picker_model(&preset);
             if self
                 .should_prompt_plan_mode_reasoning_scope(&selected_model, selected_effort.clone())
             {
@@ -573,9 +720,9 @@ impl ChatWidget {
             .contains(&default_effort)
             .then(|| default_effort.clone());
 
-        let model_slug = preset.model.to_string();
+        let model_slug = self.qualified_picker_model(&preset);
         let model_label = preset.display_name.clone();
-        let is_current_model = self.current_model() == preset.model.as_str();
+        let is_current_model = self.is_current_picker_preset(&preset);
         let highlight_choice = if is_current_model {
             if in_plan_mode {
                 self.config
@@ -705,8 +852,8 @@ impl ChatWidget {
             return;
         }
 
-        let model_slug = preset.model.to_string();
-        let is_current_model = self.current_model() == preset.model.as_str();
+        let model_slug = self.qualified_picker_model(&preset);
+        let is_current_model = self.is_current_picker_preset(&preset);
         let highlight_choice = is_current_model
             .then(|| self.effective_reasoning_effort())
             .flatten();

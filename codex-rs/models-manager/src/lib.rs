@@ -25,18 +25,21 @@ pub fn bundled_models_response()
     for model in &mut response.models {
         model.visibility = ModelVisibility::Hide;
     }
-    let default = hanzo::DEFAULT_MODEL;
-    let served = hanzo::catalog::MODELS
+    let mut models: Vec<_> = hanzo::catalog::MODELS
         .iter()
-        .map(|model| model.slug)
-        .filter(|slug| *slug != default);
-    let mut models: Vec<_> = std::iter::once(default)
-        .chain(served)
         .enumerate()
-        .map(|(index, slug)| {
-            let mut info = model_info::model_info_from_slug(slug);
-            info.visibility = ModelVisibility::List;
-            info.priority = index as i32;
+        .map(|(index, model)| {
+            let mut info = model_info::model_info_from_slug(model.slug);
+            info.visibility = if model.listed {
+                ModelVisibility::List
+            } else {
+                ModelVisibility::Hide
+            };
+            info.priority = if model.listed {
+                hanzo::catalog::picker_priority(model.slug)
+            } else {
+                50 + index as i32
+            };
             info
         })
         .collect();

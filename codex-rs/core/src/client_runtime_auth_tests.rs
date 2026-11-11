@@ -70,13 +70,15 @@ async fn selected_runtime_transport_stays_revoked(mode: RuntimeAuthMode) {
     ));
     let mut client = test_model_client(SessionSource::Exec);
     client.http_client_factory = factory;
-    Arc::get_mut(&mut client.state).unwrap().provider = codex_model_provider::ProviderAuthContext {
-        credentials: manager,
-        runtime_auth: Some((runtime, mode)),
-    }
-    .model_provider(ModelProviderInfo::create_openai_provider(
-        /*base_url*/ None,
-    ));
+    client.set_provider(
+        codex_model_provider::ProviderAuthContext {
+            credentials: manager,
+            runtime_auth: Some((runtime, mode)),
+        }
+        .model_provider(ModelProviderInfo::create_openai_provider(
+            /*base_url*/ None,
+        )),
+    );
     let mut setup = client
         .current_client_setup(ClientRouting::Workspace)
         .await
@@ -169,8 +171,8 @@ async fn request_owner_tracks_the_selected_explicit_key(mode: RuntimeAuthMode) {
     for key in ["key-a", "key-b", "key-a"] {
         let mut info = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
         info.experimental_bearer_token = Some(key.into());
-        let mut client = test_model_client(SessionSource::Exec);
-        Arc::get_mut(&mut client.state).unwrap().provider = context.model_provider(info);
+        let client = test_model_client(SessionSource::Exec);
+        client.set_provider(context.model_provider(info));
         let owner = client.auth_owner();
         let setup = client
             .current_client_setup(ClientRouting::ConfiguredProvider)

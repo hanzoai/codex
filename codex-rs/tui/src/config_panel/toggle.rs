@@ -21,6 +21,7 @@ pub(crate) enum ConfigToggle {
     PasteDetection,
     StartInVimMode,
     StatusLineColors,
+    ThirdPartyModels,
     Tips,
 }
 
@@ -108,6 +109,7 @@ impl ConfigToggle {
             Self::PasteDetection => ("disable_paste_burst", !enabled),
             Self::StartInVimMode => ("vim_mode_default", enabled),
             Self::StatusLineColors => ("status_line_use_colors", enabled),
+            Self::ThirdPartyModels => ("show_third_party_models", enabled),
             Self::Tips => ("show_tooltips", enabled),
         };
         ConfigEdit::SetPath {
@@ -130,6 +132,7 @@ impl ConfigToggle {
             Self::PasteDetection => !tui.disable_paste_burst.unwrap_or(/*default*/ false),
             Self::StartInVimMode => tui.vim_mode_default,
             Self::StatusLineColors => tui.status_line_use_colors,
+            Self::ThirdPartyModels => tui.show_third_party_models,
             Self::Tips => tui.show_tooltips,
         }
     }
@@ -154,6 +157,9 @@ impl ConfigToggle {
             Self::StartInVimMode => target.vim_mode_default = source.vim_mode_default,
             Self::StatusLineColors => {
                 target.status_line_use_colors = source.status_line_use_colors;
+            }
+            Self::ThirdPartyModels => {
+                target.show_third_party_models = source.show_third_party_models;
             }
             Self::Tips => target.show_tooltips = source.show_tooltips,
         }

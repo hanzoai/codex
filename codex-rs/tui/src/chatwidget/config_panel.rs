@@ -95,22 +95,33 @@ impl ChatWidget {
         tui: &codex_config::types::Tui,
     ) {
         preference.adopt(&mut self.local_settings.tui, tui);
-        let tui = &self.local_settings.tui;
+        let animations_enabled = self.local_settings.tui.animations;
+        let disable_paste_burst = self
+            .local_settings
+            .tui
+            .disable_paste_burst
+            .unwrap_or(/*default*/ false);
         let ConfigPreference::Toggle { setting, .. } = preference else {
             return;
         };
         match setting {
             ConfigToggle::Animations | ConfigToggle::ComposerStars => {
+                let tui = &self.local_settings.tui;
                 self.bottom_pane.set_motion_preferences(tui);
                 let model = self.current_model().to_string();
+                let tui = &self.local_settings.tui;
                 self.bottom_pane.stop_ineligible_sparkle(&model, tui);
                 self.bottom_pane.select_sparkle_model(&model, tui);
             }
-            ConfigToggle::PasteDetection => self.bottom_pane.set_disable_paste_burst(
-                /*disabled*/ tui.disable_paste_burst.unwrap_or(/*default*/ false),
-            ),
+            ConfigToggle::PasteDetection => {
+                self.bottom_pane
+                    .set_disable_paste_burst(/*disabled*/ disable_paste_burst);
+            }
             ConfigToggle::StatusLineColors => {
                 self.status_surface_overrides.status_line_use_colors = None;
+            }
+            ConfigToggle::ThirdPartyModels => {
+                self.refresh_open_model_picker();
             }
             ConfigToggle::AutomaticRecaps
             | ConfigToggle::CollapseTurnDetails
@@ -122,7 +133,7 @@ impl ChatWidget {
         if setting == ConfigToggle::Animations
             && let Some(pet) = self.ambient_pet.as_mut()
         {
-            pet.set_animations_enabled(tui.animations);
+            pet.set_animations_enabled(animations_enabled);
         }
     }
 
@@ -162,6 +173,7 @@ impl ChatWidget {
                 | ConfigToggle::PasteDetection
                 | ConfigToggle::StartInVimMode
                 | ConfigToggle::StatusLineColors
+                | ConfigToggle::ThirdPartyModels
                 | ConfigToggle::Tips => {}
             }
         }

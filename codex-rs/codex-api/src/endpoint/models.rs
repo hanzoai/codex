@@ -73,15 +73,20 @@ impl<T: HttpTransport> ModelsClient<T> {
         extra_headers: HeaderMap,
         response_body_limit_bytes: Option<usize>,
     ) -> Result<(Vec<ModelInfo>, Option<String>), ApiError> {
+        let is_hanzo = request_url
+            .split('?')
+            .next()
+            .and_then(|url| url.strip_suffix("/models"))
+            .is_some_and(|base| hanzo::is_hanzo(Some(base)));
         let (body, header_etag) = self
             .list_models_raw(request_url, extra_headers, response_body_limit_bytes)
             .await?;
         let models = match serde_json::from_slice::<ModelsResponse>(&body) {
             Ok(ModelsResponse { models }) if !models.is_empty() => models,
             Ok(ModelsResponse { models }) => {
-                decode_dynamic_models_response(&body).unwrap_or(models)
+                decode_dynamic_models_response(&body, is_hanzo).unwrap_or(models)
             }
-            Err(primary_err) => decode_dynamic_models_response(&body).ok_or_else(|| {
+            Err(primary_err) => decode_dynamic_models_response(&body, is_hanzo).ok_or_else(|| {
                 ApiError::Stream(format!(
                     "failed to decode models response: {:?} at line {} column {} (body: {} bytes)",
                     primary_err.classify(),
@@ -129,7 +134,7 @@ impl<T: HttpTransport> ModelsClient<T> {
     }
 }
 
-fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
+fn decode_dynamic_models_response(body: &[u8], is_hanzo: bool) -> Option<Vec<ModelInfo>> {
     use codex_protocol::config_types::ReasoningSummary;
     use codex_protocol::openai_models::ConfigShellToolType;
     use codex_protocol::openai_models::ModelMessages;
@@ -180,7 +185,10 @@ fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
             continue;
         };
         let slug = raw_id.trim();
-        if slug.is_empty() || !seen.insert(slug.to_string()) {
+        if slug.is_empty()
+            || (is_hanzo && !hanzo::catalog::is_chat_model(slug))
+            || !seen.insert(slug.to_string())
+        {
             continue;
         }
         let known = hanzo::catalog::find(slug);
@@ -206,6 +214,21 @@ fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
             .and_then(Value::as_i64)
             .filter(|&w| w > 0)
             .unwrap_or_else(|| known.map_or(272_000, |m| m.window));
+        let (visibility, priority) = if is_hanzo && hanzo::catalog::is_first_party(slug) {
+            let listed = known.is_none_or(|m| m.listed);
+            (
+                if listed {
+                    ModelVisibility::List
+                } else {
+                    ModelVisibility::Hide
+                },
+                hanzo::catalog::picker_priority(slug),
+            )
+        } else if is_hanzo {
+            (ModelVisibility::List, 200 + idx as i32)
+        } else {
+            (ModelVisibility::List, 100 + idx as i32)
+        };
 
         out.push(ModelInfo {
             guardian: None,
@@ -215,9 +238,9 @@ fn decode_dynamic_models_response(body: &[u8]) -> Option<Vec<ModelInfo>> {
             default_reasoning_level: default_effort.clone(),
             supported_reasoning_levels: efforts.clone(),
             shell_type: ConfigShellToolType::UnifiedExec,
-            visibility: ModelVisibility::List,
+            visibility,
             supported_in_api: true,
-            priority: 100 + idx as i32,
+            priority,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
             default_service_tier: None,
@@ -578,7 +601,8 @@ mod tests {
     #[test]
     fn decodes_openai_and_ollama_dynamic_models() {
         let openai_body = br#"{"object":"list","data":[{"id":"moonshotai/kimi-k2.5","context_window":262144},{"id":"qwen/qwen3-coder","max_model_len":131072}]}"#;
-        let models = decode_dynamic_models_response(openai_body).expect("openai models");
+        let models =
+            decode_dynamic_models_response(openai_body, /*is_hanzo*/ false).expect("openai models");
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].slug, "moonshotai/kimi-k2.5");
         assert_eq!(models[0].context_window, Some(262_144));
@@ -589,10 +613,31 @@ mod tests {
         assert_eq!(models[1].context_window, Some(131_072));
 
         let ollama_body = br#"{"models":[{"name":"deepseek-r1:32b"},{"name":"qwen3:8b"}]}"#;
-        let ollama = decode_dynamic_models_response(ollama_body).expect("ollama models");
+        let ollama =
+            decode_dynamic_models_response(ollama_body, /*is_hanzo*/ false).expect("ollama models");
         assert_eq!(ollama.len(), 2);
         assert_eq!(ollama[0].slug, "deepseek-r1:32b");
         assert_eq!(ollama[1].slug, "qwen3:8b");
+
+        let hanzo_body = br#"{"object":"list","data":[{"id":"aion-labs/aion-1.0"},{"id":"zen-embedding"},{"id":"hanzo/enso"},{"id":"zen6-coder"},{"id":"enso"}]}"#;
+        let hanzo_models =
+            decode_dynamic_models_response(hanzo_body, /*is_hanzo*/ true).expect("hanzo models");
+        let listed_slugs: Vec<&str> = hanzo_models
+            .iter()
+            .filter(|m| m.visibility == codex_protocol::openai_models::ModelVisibility::List)
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(listed_slugs, vec!["aion-labs/aion-1.0", "zen6-coder", "enso"]);
+        let alias = hanzo_models.iter().find(|m| m.slug == "hanzo/enso").unwrap();
+        assert_eq!(alias.visibility, codex_protocol::openai_models::ModelVisibility::Hide);
+        let enso = hanzo_models.iter().find(|m| m.slug == "enso").unwrap();
+        let zen6 = hanzo_models.iter().find(|m| m.slug == "zen6-coder").unwrap();
+        let third_party = hanzo_models
+            .iter()
+            .find(|m| m.slug == "aion-labs/aion-1.0")
+            .unwrap();
+        assert!(enso.priority < zen6.priority);
+        assert!(zen6.priority < third_party.priority);
 
         // Verify disk cache (`models_cache.json`) roundtrip deserialization succeeds.
         let cached_bytes = serde_json::to_vec(&ModelsResponse { models }).expect("serialize cache");

@@ -18,6 +18,13 @@ use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 use codex_protocol::openai_models::ReasoningEffort;
 use color_eyre::eyre::Result;
 
+pub(crate) fn split_provider_qualified_model(model: &str) -> (Option<&str>, &str) {
+    match model.split_once("::") {
+        Some((provider, raw)) if !provider.is_empty() && !raw.is_empty() => (Some(provider), raw),
+        _ => (None, model),
+    }
+}
+
 impl App {
     pub(super) async fn apply_default_model_selection(
         &mut self,
@@ -25,6 +32,8 @@ impl App {
         model: String,
         effort: Option<ReasoningEffort>,
     ) {
+        let (target_provider, raw_model_str) = split_provider_qualified_model(&model);
+        let raw_model = raw_model_str.to_string();
         if self
             .active_thread_model_setting_update_params(model.clone())
             .is_some_and(|params| params.permissions.is_some())
@@ -32,10 +41,17 @@ impl App {
         {
             return;
         }
-        let model_changed = self.chat_widget.current_model() != model
-            || self.chat_widget.current_collaboration_mode().model() != model;
+        let provider_changed = target_provider
+            .is_some_and(|provider| provider != self.chat_widget.config_ref().model_provider_id);
+        let model_changed = provider_changed
+            || self.chat_widget.current_model() != raw_model
+            || self.chat_widget.current_collaboration_mode().model() != raw_model;
+        if let Some(provider) = target_provider {
+            self.config.model_provider_id = provider.to_string();
+            self.chat_widget.set_active_model_provider(provider);
+        }
         if model_changed {
-            self.chat_widget.set_model(&model);
+            self.chat_widget.set_model(&raw_model);
             self.sync_active_thread_model_setting(app_server, model.clone(), /*effort*/ None)
                 .await;
             self.sync_active_thread_service_tier_to_cached_session()
@@ -54,26 +70,38 @@ impl App {
         model: String,
         effort: Option<ReasoningEffort>,
     ) {
+        let (target_provider, raw_model) = split_provider_qualified_model(&model);
         self.app_event_tx
             .send(crate::app_event::AppEvent::FollowTranscript);
         match self
             .persist_model_defaults(
                 request_handle,
-                crate::config_update::build_model_selection_edits(model.as_str(), effort.as_ref()),
+                crate::config_update::build_model_selection_edits_with_provider(
+                    target_provider,
+                    raw_model,
+                    effort.as_ref(),
+                ),
                 "default model and reasoning effort",
             )
             .await
         {
             Ok(()) => {
+                if let Some(provider) = target_provider {
+                    self.config.model_provider_id = provider.to_string();
+                    self.chat_widget.set_active_model_provider(provider);
+                }
                 let effort_label = effort
                     .as_ref()
                     .map(std::string::ToString::to_string)
                     .unwrap_or_else(|| "default".to_string());
-                tracing::info!("Selected model: {model}, Selected effort: {effort_label}");
-                let mut message = format!("Model changed to {model}");
-                if let Some(label) = Self::reasoning_label_for(&model, effort.as_ref()) {
+                tracing::info!("Selected model: {raw_model}, Selected effort: {effort_label}");
+                let mut message = format!("Model changed to {raw_model}");
+                if let Some(label) = Self::reasoning_label_for(raw_model, effort.as_ref()) {
                     message.push(' ');
                     message.push_str(&label);
+                }
+                if let Some(provider) = target_provider {
+                    message.push_str(&format!(" [{provider}]"));
                 }
                 self.chat_widget.add_info_message(message, /*hint*/ None);
             }
@@ -93,6 +121,8 @@ impl App {
         effort: Option<ReasoningEffort>,
         service_tier: Option<String>,
     ) {
+        let (target_provider, raw_model_str) = split_provider_qualified_model(&model);
+        let raw_model = raw_model_str.to_string();
         if app_server.thread_params_mode() == ThreadParamsMode::Cloud {
             let Some(thread_id) = self
                 .active_thread_id
@@ -104,9 +134,9 @@ impl App {
                 return;
             };
             if service_tier.is_some()
-                || model == crate::model_catalog::LUNA_RESERVE_MODEL
+                || raw_model == crate::model_catalog::LUNA_RESERVE_MODEL
                 || !self.model_catalog.models.iter().any(|preset| {
-                    preset.model == model
+                    preset.model == raw_model
                         && effort.as_ref().is_none_or(|effort| {
                             *effort == preset.default_reasoning_effort
                                 || preset
@@ -122,11 +152,12 @@ impl App {
                 );
                 return;
             }
-            let label = Self::reasoning_label_for(&model, effort.as_ref())
+            let label = Self::reasoning_label_for(&raw_model, effort.as_ref())
                 .map_or_else(String::new, |label| format!(" {label}"));
-            let message =
-                format!("Selected {model}{label} for the next new turn in this conversation");
-            if app_server.stage_cloud_model_selection(thread_id, model, effort) {
+            let message = format!(
+                "Selected {raw_model}{label} for the next new turn in this conversation"
+            );
+            if app_server.stage_cloud_model_selection(thread_id, raw_model, effort) {
                 self.chat_widget.add_info_message(message, /*hint*/ None);
             } else {
                 self.chat_widget.add_error_message(
@@ -137,7 +168,9 @@ impl App {
             return;
         }
         // Changing effort or speed for the effective model must preserve permissions.
-        let model_changed = self.chat_widget.current_model() != model;
+        let provider_changed = target_provider
+            .is_some_and(|provider| provider != self.chat_widget.config_ref().model_provider_id);
+        let model_changed = provider_changed || self.chat_widget.current_model() != raw_model;
         let params = if model_changed {
             self.active_thread_model_setting_update_params(model.clone())
         } else {
@@ -152,7 +185,7 @@ impl App {
                 self.chat_widget
                     .effective_collaboration_mode()
                     .with_updates(
-                        Some(model.clone()),
+                        Some(raw_model.clone()),
                         Some(effort.clone()),
                         /*developer_instructions*/ None,
                     ),
@@ -162,7 +195,7 @@ impl App {
                 None => service_tier_resolution::service_tier_update_for_core(
                     self.chat_widget.config_ref(),
                     &self.local_settings.notices,
-                    &model,
+                    &raw_model,
                     &self.model_catalog.models,
                 ),
             };
@@ -189,6 +222,9 @@ impl App {
                 }
             }
         }
+        if let Some(provider) = target_provider {
+            self.chat_widget.set_active_model_provider(provider);
+        }
         let in_plan_mode = self.chat_widget.effective_collaboration_mode().mode == ModeKind::Plan;
         let ultra = effort == Some(ReasoningEffort::Ultra);
         let clear_default_ultra = self
@@ -201,10 +237,10 @@ impl App {
             == Some(ReasoningEffort::Ultra)
             && self.config.plan_mode_reasoning_effort != Some(ReasoningEffort::Ultra);
         if model_changed {
-            self.chat_widget.set_model(&model);
+            self.chat_widget.set_model(&raw_model);
         }
         if !in_plan_mode
-            || (self.chat_widget.current_collaboration_mode().model() == model
+            || (self.chat_widget.current_collaboration_mode().model() == raw_model
                 && (ultra || clear_default_ultra))
         {
             self.chat_widget.set_reasoning_effort(effort.clone());
@@ -219,8 +255,8 @@ impl App {
         }
         self.sync_active_thread_service_tier_to_cached_session()
             .await;
-        let mut message = format!("Model changed to {model}");
-        if let Some(label) = Self::reasoning_label_for(&model, effort.as_ref()) {
+        let mut message = format!("Model changed to {raw_model}");
+        if let Some(label) = Self::reasoning_label_for(&raw_model, effort.as_ref()) {
             message.push(' ');
             message.push_str(&label);
         }
@@ -233,6 +269,9 @@ impl App {
             } else {
                 &service_tier
             });
+        }
+        if let Some(provider) = target_provider {
+            message.push_str(&format!(" [{provider}]"));
         }
         message.push_str(" for this session only");
         self.chat_widget.add_info_message(message, /*hint*/ None);

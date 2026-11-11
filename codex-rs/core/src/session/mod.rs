@@ -2517,6 +2517,25 @@ impl Session {
         state.session_configuration.provider.info().clone()
     }
 
+    pub(crate) async fn switch_model_provider(
+        &self,
+        provider_id: String,
+        provider_info: ModelProviderInfo,
+    ) {
+        let shared_provider = codex_model_provider::create_model_provider(
+            provider_info.clone(),
+            Some(Arc::clone(&self.services.auth_manager)),
+        );
+        self.services
+            .model_client
+            .set_provider(Arc::clone(&shared_provider));
+        let mut state = self.state.lock().await;
+        state.session_configuration.provider = shared_provider;
+        let config = Arc::make_mut(&mut state.session_configuration.original_config_do_not_use);
+        config.model_provider_id = provider_id;
+        config.model_provider = provider_info;
+    }
+
     pub(crate) async fn refresh_hooks(&self, mut config: Arc<Config>) {
         loop {
             let disabled_plugin_ids = self.state.lock().await.active_disabled_plugin_ids.clone();

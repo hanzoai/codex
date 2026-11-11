@@ -11,7 +11,7 @@ mod events;
 mod external_agent_config;
 pub(crate) mod fs;
 mod history;
-mod models;
+pub(crate) mod models;
 pub(crate) mod provider_selection;
 #[cfg(test)]
 #[path = "app_server_session/provider_selection_tests.rs"]
@@ -2432,6 +2432,7 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
         upgrade,
         show_in_picker: !model.hidden,
         multi_agent_version: None,
+        model_provider: None,
         availability_nux: model.availability_nux.map(|nux| ModelAvailabilityNux {
             message: nux.message,
         }),

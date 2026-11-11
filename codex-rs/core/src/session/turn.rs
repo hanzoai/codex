@@ -324,6 +324,7 @@ pub(crate) async fn run_turn(
             images: user_input
                 .iter()
                 .any(|item| matches!(item, UserInput::Image { .. } | UserInput::LocalImage { .. })),
+            model: Some(turn_context.capture_current_model_info().slug.clone()),
         };
         let hints = handle.route(&turn_context.sub_id, request).await;
         if !hints.is_empty() {

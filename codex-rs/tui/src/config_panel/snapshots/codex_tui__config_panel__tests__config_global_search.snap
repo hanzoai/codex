@@ -1,6 +1,5 @@
 ---
 source: tui/src/config_panel/config_panel_tests.rs
-assertion_line: 206
 expression: "render(&panel, 100)"
 ---
 
@@ -11,7 +10,7 @@ expression: "render(&panel, 100)"
 
   Search › notify when
 
-› Notify when           Unfocused ›          Notifications · Notify only while you are away or whil…
+› Notify when             Unfocused ›          Notifications · Notify only while you are away or wh…
 
 
 

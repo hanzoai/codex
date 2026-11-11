@@ -97,11 +97,11 @@ async fn session_model_selection_notifies_the_original_task_after_each_final_ast
         while events.try_recv().is_ok() {}
         chat.handle_key_event(KeyCode::Char('s').into());
 
-        assert_matches!(events.try_recv(), Ok(AppEvent::AstraSelectedFromModelPicker {
-            thread_id: selected_thread,
+        assert_matches!(events.try_recv(), Ok(AppEvent::SelectSessionModel {
             model,
-            action: AstraModelPickerAction::SelectSessionModel { effort: selected_effort, service_tier: None },
-        }) if selected_thread == thread_id && model == "gpt-6-astra" && selected_effort == Some(effort));
+            effort: selected_effort,
+            service_tier: None,
+        }) if model == "gpt-6-astra" && selected_effort == Some(effort));
         assert!(
             std::iter::from_fn(|| events.try_recv().ok()).all(|event| matches!(
                 event,
@@ -129,14 +129,14 @@ async fn model_settings_only_command_accepts_the_current_hidden_model() {
         service_tier: Some(service_tier),
     }) if model == "gpt-5.5" && service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE);
 
+    // Hanzo: explicit `/model <slug>` remains usable even when hidden from the picker list.
     while events.try_recv().is_ok() {}
     chat.handle_model_command_args("gpt-5.5 --reasoning=high");
-    assert!(
-        std::iter::from_fn(|| events.try_recv().ok()).all(|event| !matches!(
-            event,
-            AppEvent::SelectSessionModel { .. } | AppEvent::AstraSelectedFromModelPicker { .. }
-        ))
-    );
+    assert_matches!(events.try_recv(), Ok(AppEvent::SelectSessionModel {
+        model,
+        effort: Some(ReasoningEffortConfig::High),
+        service_tier: None,
+    }) if model == "gpt-5.5");
 }
 
 #[tokio::test]

@@ -5634,6 +5634,11 @@
           "description": "Show informational notices about connected app server version differences. Defaults to `true`; this does not control compatibility errors or version status.",
           "type": "boolean"
         },
+        "show_third_party_models": {
+          "default": false,
+          "description": "Show third-party cloud models (OpenAI, Anthropic, Google, DeepSeek, Qwen, etc.) from Hanzo Cloud in `/model`. Defaults to `false`.",
+          "type": "boolean"
+        },
         "show_tooltips": {
           "default": true,
           "description": "Show startup tooltips in the TUI welcome screen. Defaults to `true`.",
@@ -7678,7 +7683,7 @@
       "description": "Wire protocol that the provider speaks.",
       "oneOf": [
         {
-          "description": "The Responses API exposed by OpenAI at `/v1/responses`.",
+          "description": "The Responses API exposed by OpenAI at `/v1/responses` (with automatic fallback to `/v1/chat/completions` SSE on endpoints that return 404/405/501).",
           "enum": [
             "responses"
           ],

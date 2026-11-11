@@ -3,12 +3,12 @@ source: tui/src/app/provider_tests.rs
 expression: "render_bottom_popup(&app.chat_widget, 100)"
 ---
   Model providers
-  Current chat: test-provider · Default for new chats: gateway
+  Current chat: gateway · Default for new chats: gateway
 
 
-› 1. ● Example Gateway                    gateway
+› 1. ● Example Gateway (current)          gateway
   2. ○ OpenAI                             openai
   3. Create a custom provider or gateway
 
-  /new now uses gateway. Restart the app server and TUI to refresh /model.
+  Switched model provider to gateway.
   enter details · esc back

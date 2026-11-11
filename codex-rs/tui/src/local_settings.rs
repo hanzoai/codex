@@ -93,6 +93,13 @@ impl LocalSettings {
                 session_picker_view: Some(config.tui_session_picker_view),
                 agents_overview_grouping: config.tui_agents_overview_grouping,
                 resume_cwd: config.tui_resume_cwd,
+                show_third_party_models: config
+                    .config_layer_stack
+                    .effective_config()
+                    .get("tui")
+                    .and_then(|tui| tui.get("show_third_party_models"))
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(/*default*/ false),
                 keymap: config.tui_keymap.clone(),
                 quick_dials: config.tui_quick_dials.clone(),
                 model_availability_nux: config.model_availability_nux.clone(),
@@ -234,6 +241,7 @@ impl LocalSettings {
         settings.tui.effects.starfield = self.tui.effects.starfield;
         settings.tui.disable_paste_burst = self.tui.disable_paste_burst;
         settings.tui.show_tooltips = self.tui.show_tooltips;
+        settings.tui.show_third_party_models = self.tui.show_third_party_models;
         settings
     }
 

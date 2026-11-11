@@ -6,7 +6,6 @@ use codex_protocol::openai_models::ModelMessages;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::TruncationPolicyConfig;
-use codex_protocol::openai_models::default_input_modalities;
 use std::path::Path;
 
 /// Convert a ModelPreset to ModelInfo for cache storage.
@@ -65,7 +64,7 @@ fn preset_to_info(preset: &ModelPreset, priority: i32) -> ModelInfo {
         comp_hash: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
+        input_modalities: preset.input_modalities.clone(),
         supports_search_tool: false,
         supports_experimental_context: false,
         use_responses_lite: false,

@@ -187,7 +187,12 @@ impl CatalogRequestProcessor {
         let (config, models_manager) = match params.model_provider.as_deref() {
             None => (active_config, active_models_manager),
             Some(provider_id) => {
-                let config = config_for_provider(&self.config, provider_id)?;
+                let latest = self
+                    .load_latest_config(/*fallback_cwd*/ None)
+                    .await
+                    .map(Arc::new)
+                    .unwrap_or_else(|_| Arc::clone(&active_config));
+                let config = config_for_provider(&latest, provider_id)?;
                 if provider_id == active_config.model_provider_id
                     && config.model_provider == active_config.model_provider
                 {

@@ -1,6 +1,5 @@
 ---
 source: tui/src/config_panel/config_panel_tests.rs
-assertion_line: 128
 expression: "render(&panel, 50)"
 ---
 
@@ -11,7 +10,7 @@ expression: "render(&panel, 50)"
 
   Search › deselect after copy
 
-› Deselect after copy   Unavailable
+› Deselect after copy     Unavailable
 
 
 

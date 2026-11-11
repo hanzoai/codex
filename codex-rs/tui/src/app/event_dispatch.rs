@@ -2386,6 +2386,9 @@ impl App {
                     .await;
             }
             AppEvent::UpdateModel(model) => {
+                let (target_provider, raw_model_str) =
+                    crate::app::model_defaults::split_provider_qualified_model(&model);
+                let raw_model = raw_model_str.to_string();
                 if self
                     .active_thread_model_setting_update_params(model.clone())
                     .is_some_and(|params| params.permissions.is_some())
@@ -2393,10 +2396,17 @@ impl App {
                 {
                     return Ok(AppRunControl::Continue);
                 }
-                let model_changed = self.chat_widget.current_model() != model
-                    || self.chat_widget.current_collaboration_mode().model() != model;
+                let provider_changed = target_provider.is_some_and(|provider| {
+                    provider != self.chat_widget.config_ref().model_provider_id
+                });
+                let model_changed = provider_changed
+                    || self.chat_widget.current_model() != raw_model
+                    || self.chat_widget.current_collaboration_mode().model() != raw_model;
+                if let Some(provider) = target_provider {
+                    self.chat_widget.set_active_model_provider(provider);
+                }
                 if model_changed {
-                    self.chat_widget.set_model(&model);
+                    self.chat_widget.set_model(&raw_model);
                     self.sync_active_thread_model_setting(app_server, model, /*effort*/ None)
                         .await;
                     self.sync_active_thread_service_tier_to_cached_session()
@@ -2561,7 +2571,11 @@ impl App {
             }
             AppEvent::FetchModels { request_id } => {
                 if self.chat_widget.model_popup_request_is_current(request_id) {
-                    app_server.fetch_models(request_id, self.app_event_tx.clone());
+                    app_server.fetch_models_for_config(
+                        request_id,
+                        self.chat_widget.config_ref(),
+                        self.app_event_tx.clone(),
+                    );
                 }
             }
             AppEvent::ModelsLoaded { request_id, result: Ok(models) }
@@ -2606,6 +2620,9 @@ impl App {
                 if app_server.thread_params_mode().settings_owner()
                     == ThreadSettingsOwner::Server
                 {
+                    let (_, raw_model) =
+                        crate::app::model_defaults::split_provider_qualified_model(&model);
+                    let raw_model = raw_model.to_string();
                     self.select_session_model(
                         app_server,
                         model,
@@ -2613,12 +2630,16 @@ impl App {
                         /*service_tier*/ None,
                     )
                     .await;
-                    if let Some(model) = sparkle_model.as_ref() {
+                    if let Some(sparkle) = sparkle_model.as_ref() {
+                        let _ = raw_model;
                         self.chat_widget
-                            .on_sparkle_model_selected_from_picker(model);
+                            .on_sparkle_model_selected_from_picker(sparkle);
                     }
                     return Ok(AppRunControl::Continue);
                 }
+                let (target_provider, raw_model_str) =
+                    crate::app::model_defaults::split_provider_qualified_model(&model);
+                let raw_model = raw_model_str.to_string();
                 if self
                     .active_thread_model_setting_update_params(model.clone())
                     .is_some_and(|params| params.permissions.is_some())
@@ -2626,10 +2647,18 @@ impl App {
                 {
                     return Ok(AppRunControl::Continue);
                 }
-                let model_changed = self.chat_widget.current_model() != model
-                    || self.chat_widget.current_collaboration_mode().model() != model;
+                let provider_changed = target_provider.is_some_and(|provider| {
+                    provider != self.chat_widget.config_ref().model_provider_id
+                });
+                let model_changed = provider_changed
+                    || self.chat_widget.current_model() != raw_model
+                    || self.chat_widget.current_collaboration_mode().model() != raw_model;
+                if let Some(provider) = target_provider {
+                    self.config.model_provider_id = provider.to_string();
+                    self.chat_widget.set_active_model_provider(provider);
+                }
                 let default_effort =
-                    self.on_apply_advanced_reasoning(model.as_str(), effort.clone());
+                    self.on_apply_advanced_reasoning(raw_model.as_str(), effort.clone());
                 if model_changed {
                     self.sync_active_thread_model_setting(
                         app_server,
@@ -2650,8 +2679,9 @@ impl App {
                 if let Some(default_effort) = default_effort.as_ref()
                     && let Err(err) = self.persist_model_defaults(
                         app_server.request_handle(),
-                        crate::config_update::build_model_selection_edits(
-                            model.as_str(),
+                        crate::config_update::build_model_selection_edits_with_provider(
+                            target_provider,
+                            raw_model.as_str(),
                             Some(default_effort),
                         ),
                         "default model and reasoning effort",
@@ -2663,8 +2693,13 @@ impl App {
                     self.chat_widget
                         .add_error_message(format!("Failed to save default model: {error}"));
                 } else {
+                    let provider_suffix = target_provider
+                        .map(|provider| format!(" [{provider}]"))
+                        .unwrap_or_default();
                     self.chat_widget.add_info_message(
-                        format!("Model changed to {model} {effort} for this conversation"),
+                        format!(
+                            "Model changed to {raw_model} {effort}{provider_suffix} for this conversation"
+                        ),
                         /*hint*/ None,
                     );
                 }

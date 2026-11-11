@@ -38,6 +38,7 @@ pub(crate) struct Completion {
 #[derive(Debug)]
 enum SaveNotice {
     Saved(String),
+    Switched { id: String, message: String },
     UnconfirmedCreate,
 }
 
@@ -114,12 +115,10 @@ impl Write {
                         }
                     })?;
                 match response.status {
-                    WriteStatus::Ok => {
-                        *provider_changed = true;
-                        Ok(SaveNotice::Saved(format!(
-                            "/new now uses {id}. Restart the app server and TUI to refresh /model."
-                        )))
-                    }
+                    WriteStatus::Ok => Ok(SaveNotice::Switched {
+                        id: id.clone(),
+                        message: format!("Switched model provider to {id}."),
+                    }),
                     WriteStatus::OkOverridden => {
                         let reason = rpc::override_reason(response);
                         Ok(SaveNotice::Saved(format!("Saved {id}. {reason}")))
@@ -142,6 +141,16 @@ impl Completion {
         match self.result {
             Ok(notice) => {
                 let message = match notice {
+                    SaveNotice::Switched { id, message } => {
+                        app.config.model_provider_id = id.clone();
+                        app.chat_widget.set_active_model_provider(&id);
+                        app.chat_widget.refresh_models_after_provider_switch();
+                        if !present {
+                            app.chat_widget
+                                .add_info_message(message.clone(), /*hint*/ None);
+                        }
+                        message
+                    }
                     SaveNotice::Saved(message) => {
                         if !present {
                             app.chat_widget

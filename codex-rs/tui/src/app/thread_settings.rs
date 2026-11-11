@@ -77,9 +77,10 @@ impl App {
         model: String,
     ) -> Option<ThreadSettingsUpdateParams> {
         let thread_id = self.active_thread_id?;
+        let (_, raw_model) = crate::app::model_defaults::split_provider_qualified_model(&model);
         let is_cyber_model = self.model_catalog.try_list_models().is_ok_and(|models| {
             models.iter().any(|preset| {
-                preset.model == model
+                preset.model == raw_model
                     && preset.model_specialty.as_deref() == Some(MODEL_SPECIALTY_CYBER)
             })
         });

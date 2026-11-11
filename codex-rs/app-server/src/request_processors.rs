@@ -696,6 +696,26 @@ fn resolve_turn_environment_requests(
     Ok(Some(requests))
 }
 
+pub(crate) fn builtin_or_configured_provider(
+    config: &Config,
+    provider_id: &str,
+) -> Option<codex_model_provider_info::ModelProviderInfo> {
+    if let Some(provider) = config.model_providers.get(provider_id) {
+        return Some(provider.clone());
+    }
+    if provider_id == "local" {
+        return Some(codex_model_provider_info::ModelProviderInfo {
+            name: "Hanzo Engine (local)".to_string(),
+            base_url: Some("http://127.0.0.1:1234/v1".to_string()),
+            wire_api: codex_model_provider_info::WireApi::Responses,
+            requires_openai_auth: false,
+            supports_websockets: false,
+            ..Default::default()
+        });
+    }
+    None
+}
+
 /// Project-local layers cannot define providers, so explicit selectors can use the startup map.
 fn config_for_provider(
     startup: &Arc<Config>,
@@ -704,14 +724,14 @@ fn config_for_provider(
     if startup.model_provider_id == provider_id {
         return Ok(Arc::clone(startup));
     }
-    let provider = startup.model_providers.get(provider_id).ok_or_else(|| {
+    let provider = builtin_or_configured_provider(startup, provider_id).ok_or_else(|| {
         model_provider_error(&ModelProviderError::ModelProviderNotConfigured {
             model_provider: provider_id.to_owned(),
         })
     })?;
     let mut config = startup.as_ref().clone();
     config.model_provider_id = provider_id.to_owned();
-    config.model_provider = provider.clone();
+    config.model_provider = provider;
     Ok(Arc::new(config))
 }
 

@@ -150,7 +150,7 @@ fn test_model_client_with_thread_id(
 }
 
 fn test_model_provider() -> SharedModelProvider {
-    test_model_client(SessionSource::Cli).state.provider.clone()
+    test_model_client(SessionSource::Cli).provider()
 }
 
 #[test_case::test_case(None; "credential_auth")]
@@ -227,15 +227,16 @@ async fn workspace_routed_http_rejects_redirects_without_a_routing_header(
             },
             format!("{}/register", registration.uri()).parse().unwrap(),
         ));
-        let mut client = test_model_client(SessionSource::Exec);
-        Arc::get_mut(&mut client.state).unwrap().provider =
+        let client = test_model_client(SessionSource::Exec);
+        client.set_provider(
             codex_model_provider::ProviderAuthContext {
                 credentials: manager,
                 runtime_auth: runtime_mode.map(|mode| (runtime, mode)),
             }
             .model_provider(ModelProviderInfo::create_openai_provider(
                 /*base_url*/ None,
-            ));
+            )),
+        );
         let mut setup = client
             .current_client_setup(super::ClientRouting::Workspace)
             .await
@@ -379,8 +380,8 @@ async fn client_setup_accepts_command_credential_refresh() {
             setup_calls: AtomicUsize::new(/*v*/ 0),
         });
         let manager = provider.auth_manager().unwrap();
-        let mut client = test_model_client(SessionSource::Exec);
-        Arc::get_mut(&mut client.state).unwrap().provider = provider;
+        let client = test_model_client(SessionSource::Exec);
+        client.set_provider(provider);
 
         let setup = client.current_client_setup(routing).await.unwrap();
         let mut headers = http::HeaderMap::new();
@@ -439,8 +440,8 @@ async fn client_setup_rebuilds_chatgpt_refresh_but_rejects_account_switches() {
             },
             setup_calls: AtomicUsize::new(/*v*/ 0),
         });
-        let mut client = test_model_client(SessionSource::Exec);
-        Arc::get_mut(&mut client.state).unwrap().provider = provider.clone();
+        let client = test_model_client(SessionSource::Exec);
+        client.set_provider(provider.clone());
         let result = client
             .current_client_setup(super::ClientRouting::ConfiguredProvider)
             .await;
@@ -609,10 +610,8 @@ async fn responses_request_includes_internal_metadata_for_provider_grant_or_firs
     let mut provider =
         ModelProviderInfo::create_openai_provider(Some("https://api.openai.com/v1".to_string()));
     let mut api_provider = provider.to_api_provider(/*auth_mode*/ None)?;
-    let mut client = test_model_client(SessionSource::Cli);
-    Arc::get_mut(&mut client.state)
-        .expect("test client should have unique session state")
-        .provider = create_model_provider(provider.clone(), /*auth_manager*/ None);
+    let client = test_model_client(SessionSource::Cli);
+    client.set_provider(create_model_provider(provider.clone(), /*auth_manager*/ None));
     let output = output_with_tool_result_metadata(ToolResultMetadata::new(&json!({
         "private": { "resource": "raw-result-metadata" },
     })));
@@ -653,13 +652,10 @@ async fn responses_request_includes_internal_metadata_for_provider_grant_or_firs
         (true, "http://provider.example/v1", true),
     ] {
         provider.include_internal_metadata = provider_grant;
-        Arc::get_mut(&mut client.state)
-            .expect("test client should have unique session state")
-            .provider = create_model_provider(provider.clone(), /*auth_manager*/ None);
+        client.set_provider(create_model_provider(provider.clone(), /*auth_manager*/ None));
         api_provider.base_url = base_url.to_string();
         let include_internal = client
-            .state
-            .provider
+            .provider()
             .include_internal_metadata(&api_provider);
         for responses_lite in [false, true] {
             let mut model = test_model_info();
@@ -828,10 +824,8 @@ fn responses_request_preserves_result_metadata_above_previous_aggregate_budget()
     let provider =
         ModelProviderInfo::create_openai_provider(Some("https://api.openai.com/v1".to_string()));
     let api_provider = provider.to_api_provider(/*auth_mode*/ None)?;
-    let mut client = test_model_client(SessionSource::Cli);
-    Arc::get_mut(&mut client.state)
-        .expect("test client should have unique session state")
-        .provider = create_model_provider(provider, /*auth_manager*/ None);
+    let client = test_model_client(SessionSource::Cli);
+    client.set_provider(create_model_provider(provider, /*auth_manager*/ None));
     let responses_metadata = test_responses_metadata_for_client(
         &client,
         /*turn_id*/ None,
@@ -847,8 +841,7 @@ fn responses_request_preserves_result_metadata_above_previous_aggregate_budget()
         /*service_tier*/ None,
         &responses_metadata,
         client
-            .state
-            .provider
+            .provider()
             .include_internal_metadata(&api_provider),
     )?;
     let body = serde_json::to_value(&request)?;
@@ -874,10 +867,8 @@ fn websocket_incremental_reuse_tracks_raw_result_metadata() -> anyhow::Result<()
         ..ModelProviderInfo::create_openai_provider(Some("https://api.openai.com/v1".to_string()))
     };
     let mut api_provider = provider.to_api_provider(/*auth_mode*/ None)?;
-    let mut client = test_model_client(SessionSource::Cli);
-    Arc::get_mut(&mut client.state)
-        .expect("test client should have unique session state")
-        .provider = create_model_provider(provider, /*auth_manager*/ None);
+    let client = test_model_client(SessionSource::Cli);
+    client.set_provider(create_model_provider(provider, /*auth_manager*/ None));
     let responses_metadata = test_responses_metadata_for_client(
         &client,
         /*turn_id*/ None,
@@ -944,8 +935,7 @@ fn websocket_incremental_reuse_tracks_raw_result_metadata() -> anyhow::Result<()
         current_output.set_turn_id_if_missing("current-turn");
         api_provider.base_url = base_url.to_string();
         let include_internal = client
-            .state
-            .provider
+            .provider()
             .include_internal_metadata(&api_provider);
         let previous = client.build_responses_request(
             &Prompt {
@@ -1085,10 +1075,8 @@ async fn responses_http_preserves_raw_tool_metadata_for_openai_custom_endpoint()
         ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
     provider.requires_openai_auth = false;
     provider.supports_websockets = false;
-    let mut client = test_model_client(SessionSource::Cli);
-    Arc::get_mut(&mut client.state)
-        .expect("test client should have unique session state")
-        .provider = create_model_provider(provider, /*auth_manager*/ None);
+    let client = test_model_client(SessionSource::Cli);
+    client.set_provider(create_model_provider(provider, /*auth_manager*/ None));
     let output = output_with_tool_result_metadata(ToolResultMetadata::new(&json!({
         "private": "raw-result-metadata",
     })));
@@ -2209,12 +2197,10 @@ fn thread_responses_headers_are_scoped_to_model_and_backend_auth() {
         assert_eq!(model_client.responses_headers(auth, model), expected);
     }
 
-    Arc::get_mut(&mut model_client.state)
-        .expect("test client should have unique session state")
-        .provider = create_model_provider(
+    model_client.set_provider(create_model_provider(
         ModelProviderInfo::create_openai_provider(Some("https://proxy.example.com/v1".to_owned())),
         Some(AuthManager::from_auth_for_testing(chatgpt_auth.clone())),
-    );
+    ));
     assert_eq!(
         model_client.responses_headers(Some(&chatgpt_auth), "selected-model"),
         headers,
@@ -2373,8 +2359,7 @@ async fn realtime_call_preserves_captured_account_binding(change: RealtimeCreden
         .to_api_provider(Some(AuthMode::ChatgptAuthTokens))
         .unwrap();
     let mut model_client = test_model_client(SessionSource::Exec);
-    Arc::get_mut(&mut model_client.state).unwrap().provider =
-        create_model_provider(info, Some(Arc::clone(&credentials)));
+    model_client.set_provider(create_model_provider(info, Some(Arc::clone(&credentials))));
     model_client.http_client_factory = factory;
     let refreshes = Arc::new(AtomicUsize::new(0));
     let refreshed_token = token("workspace-a", "refreshed");
@@ -2510,7 +2495,7 @@ fn realtime_auth_context(
 #[test_case::test_case(RuntimeAuthMode::AssertionOnly, true; "assertion_only_with_gateway")]
 #[tokio::test]
 async fn realtime_auth_uses_request_scope_on_reconnect(mode: RuntimeAuthMode, gateway: bool) {
-    let (mut model_client, _) =
+    let (model_client, _) =
         model_client_with_counting_attestation(/*include_attestation*/ false);
     let registration = wiremock::MockServer::start().await;
     let home = TempDir::new().unwrap();
@@ -2544,8 +2529,7 @@ async fn realtime_auth_uses_request_scope_on_reconnect(mode: RuntimeAuthMode, ga
             json!({"access_token": "gateway-token", "refresh_token": "refresh-secret", "expires_at": i64::MAX}),
         )
     });
-    Arc::get_mut(&mut model_client.state).unwrap().provider =
-        create_model_provider(info, Some(credentials));
+    model_client.set_provider(create_model_provider(info, Some(credentials)));
     let runtime_id = uuid::Uuid::new_v4().to_string();
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::body_partial_json(serde_json::json!({
@@ -2635,7 +2619,7 @@ async fn realtime_auth_uses_request_scope_on_reconnect(mode: RuntimeAuthMode, ga
 
 #[tokio::test]
 async fn realtime_uses_openai_credentials_with_bedrock_inference() {
-    let (mut model_client, _) =
+    let (model_client, _) =
         model_client_with_counting_attestation(/*include_attestation*/ false);
     let credentials = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("realtime-key"));
     let info = ModelProviderInfo::create_amazon_bedrock_provider(Some(
@@ -2646,8 +2630,7 @@ async fn realtime_uses_openai_credentials_with_bedrock_inference() {
             auth_refresh: None,
         },
     ));
-    Arc::get_mut(&mut model_client.state).unwrap().provider =
-        create_model_provider(info, Some(Arc::clone(&credentials)));
+    model_client.set_provider(create_model_provider(info, Some(Arc::clone(&credentials))));
     let context = codex_model_provider::ProviderAuthContext {
         credentials,
         runtime_auth: None,
@@ -2671,7 +2654,7 @@ async fn realtime_uses_openai_credentials_with_bedrock_inference() {
 #[test_case::test_case(RuntimeAuthMode::AssertionOnly; "assertion_only")]
 #[tokio::test]
 async fn realtime_custom_call_keeps_selected_key_for_openai_sideband(mode: RuntimeAuthMode) {
-    let (mut model_client, _) =
+    let (model_client, _) =
         model_client_with_counting_attestation(/*include_attestation*/ false);
     let home = TempDir::new().unwrap();
     let credentials = AuthManager::from_auth_for_testing_with_home(
@@ -2680,8 +2663,7 @@ async fn realtime_custom_call_keeps_selected_key_for_openai_sideband(mode: Runti
     );
     let mut info = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
     info.experimental_bearer_token = Some("realtime-key".into());
-    Arc::get_mut(&mut model_client.state).unwrap().provider =
-        create_model_provider(info, Some(credentials));
+    model_client.set_provider(create_model_provider(info, Some(credentials)));
     let registration = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/register"))

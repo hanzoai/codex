@@ -149,7 +149,8 @@ impl ModelProvider for GcpModelProvider {
         &self,
         config_model_catalog: Option<ModelsResponse>,
     ) -> SharedModelsManager {
-        let origin = if config_model_catalog.is_some() {
+        let has_explicit_catalog = config_model_catalog.is_some();
+        let origin = if has_explicit_catalog {
             codex_models_manager::ModelOrigin::ExplicitConfig
         } else {
             codex_models_manager::ModelOrigin::Provider
@@ -166,6 +167,9 @@ impl ModelProvider for GcpModelProvider {
         // Vertex supports function tools, namespaces, and client-side tool search, but not
         // Responses Lite or custom tools.
         for model in &mut model_catalog.models {
+            if !has_explicit_catalog {
+                model.visibility = codex_protocol::openai_models::ModelVisibility::List;
+            }
             model.use_responses_lite = false;
             model.tool_mode = Some(ToolMode::Direct);
             model.apply_patch_tool_type = None;

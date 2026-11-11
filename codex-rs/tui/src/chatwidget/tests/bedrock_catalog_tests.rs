@@ -73,19 +73,16 @@ async fn bedrock_astra_model_and_reasoning_pickers() {
         let selected =
             std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| match event {
                 AppEvent::AstraSelectedFromModelPicker {
-                    thread_id,
                     model,
                     action: AstraModelPickerAction::ApplyAdvancedReasoning { effort },
-                } => Some((thread_id, model, effort)),
+                    ..
+                }
+                | AppEvent::ApplyAdvancedReasoning { model, effort } => Some((model, effort)),
                 _ => None,
             });
         assert_eq!(
             selected,
-            Some((
-                chat.thread_id.expect("active thread"),
-                astra_model.to_string(),
-                ReasoningEffortConfig::Ultra,
-            ))
+            Some((astra_model.to_string(), ReasoningEffortConfig::Ultra))
         );
     }
 }

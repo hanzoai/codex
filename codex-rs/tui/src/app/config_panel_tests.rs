@@ -40,9 +40,12 @@ async fn config_toggle_save_uses_host_config_and_applies_live_while_offline() ->
     let session_cwd = root.path().join("session");
     std::fs::create_dir_all(&home)?;
     for (cwd, auto_recap) in [(&local_cwd, false), (&session_cwd, true)] {
-        std::fs::create_dir_all(cwd.join(".codex"))?;
+        let project_cfg = cwd
+            .join(codex_protocol::permissions::PROJECT_DIR)
+            .join("dev");
+        std::fs::create_dir_all(&project_cfg)?;
         std::fs::write(
-            cwd.join(".codex/config.toml"),
+            project_cfg.join("config.toml"),
             format!("[tui]\nauto_recap = {auto_recap}\n"),
         )?;
     }

@@ -289,6 +289,11 @@ pub struct ModelPreset {
     #[schemars(skip)]
     #[ts(skip)]
     pub multi_agent_version: Option<MultiAgentVersion>,
+    /// Provider id that owns this model preset when multiple providers are aggregated in the TUI.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub model_provider: Option<String>,
     /// Availability NUX shown when this preset becomes accessible to the user.
     pub availability_nux: Option<ModelAvailabilityNux>,
     /// whether this model is supported in the api
@@ -1112,6 +1117,7 @@ impl From<ModelInfo> for ModelPreset {
             }),
             show_in_picker: info.visibility == ModelVisibility::List,
             multi_agent_version: info.multi_agent_version,
+            model_provider: None,
             availability_nux: info.availability_nux,
             supported_in_api: info.supported_in_api,
             input_modalities: info.input_modalities,

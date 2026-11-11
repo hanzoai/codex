@@ -1010,6 +1010,24 @@ impl TurnRequestProcessor {
         let (_, thread) = self.load_thread(&params.thread_id).await?;
         self.ensure_direct_input_allowed(request_id, thread.as_ref())
             .await?;
+        let mut model = params.model;
+        if let Some(raw_param) = model.as_deref()
+            && let Some((provider_id, raw_model)) = raw_param.split_once("::")
+        {
+            let latest_config = self
+                .config_manager
+                .load_latest_config(/*fallback_cwd*/ None)
+                .await
+                .map_err(|err| config_load_error(&err))?;
+            if let Some(provider_info) =
+                super::builtin_or_configured_provider(&latest_config, provider_id)
+            {
+                thread
+                    .switch_model_provider(provider_id.to_string(), provider_info)
+                    .await;
+                model = Some(raw_model.to_string());
+            }
+        }
         let cwd = resolve_request_cwd(params.cwd)?;
         let environments =
             resolve_turn_environment_requests(self.thread_manager.as_ref(), params.environments)?;
@@ -1032,7 +1050,7 @@ impl TurnRequestProcessor {
                     approvals_reviewer: params.approvals_reviewer,
                     sandbox_policy: params.sandbox_policy,
                     permissions: params.permissions,
-                    model: params.model,
+                    model,
                     service_tier: params.service_tier,
                     effort: params.effort,
                     summary: params.summary,

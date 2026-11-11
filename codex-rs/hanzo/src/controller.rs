@@ -56,6 +56,8 @@ pub struct Request {
     pub text: String,
     /// Whether it carries images.
     pub images: bool,
+    /// Active model slug for this turn (`None` falls back to the thread's initial SKU).
+    pub model: Option<String>,
 }
 
 pub trait Controller: Send + Sync {

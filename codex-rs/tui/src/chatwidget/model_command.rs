@@ -131,17 +131,25 @@ fn resolve_model_command(chat: &ChatWidget, args: &str) -> Result<ModelCommand, 
     }
     // Hanzo: a typed name is Dev's match (`hanzo::model::pick`): the exact name, then
     // `<name>-auto`, then the only model whose name contains it.
-    let model_name = match args.model.as_deref() {
-        None => chat.current_model().to_owned(),
+    let (explicit_provider, model_name) = match args.model.as_deref() {
+        None => (None, chat.current_model().to_owned()),
         Some(wanted) => {
-            let offered: Vec<String> = chat
+            let (wanted_provider, wanted_slug) =
+                crate::app::model_defaults::split_provider_qualified_model(wanted.trim());
+            let mut offered: Vec<String> = chat
                 .model_catalog
                 .models
                 .iter()
-                .filter(|model| model.show_in_picker)
+                .filter(|model| {
+                    model.show_in_picker
+                        && wanted_provider.is_none_or(|provider| {
+                            model.model_provider.as_deref() == Some(provider)
+                        })
+                })
                 .map(|model| model.model.clone())
                 .collect();
-            match hanzo::model::pick(wanted, &offered) {
+            offered.dedup();
+            let picked = match hanzo::model::pick(wanted_slug, &offered) {
                 hanzo::model::Pick::One(model) => model,
                 hanzo::model::Pick::Many(names) => {
                     return Err(format!(
@@ -149,17 +157,18 @@ fn resolve_model_command(chat: &ChatWidget, args: &str) -> Result<ModelCommand, 
                         names.join(", ")
                     ));
                 }
-                hanzo::model::Pick::None => wanted.trim().to_string(),
-            }
+                hanzo::model::Pick::None => wanted_slug.trim().to_string(),
+            };
+            (wanted_provider.map(str::to_owned), picked)
         }
     };
     let synthesized;
-    let model = if let Some(existing) = chat
-        .model_catalog
-        .models
-        .iter()
-        .find(|model| model.model == model_name)
-    {
+    let model = if let Some(existing) = chat.model_catalog.models.iter().find(|model| {
+        model.model == model_name
+            && explicit_provider
+                .as_deref()
+                .is_none_or(|provider| model.model_provider.as_deref() == Some(provider))
+    }) {
         existing
     } else {
         let mut info = codex_models_manager::model_info::model_info_from_slug(&model_name);
@@ -167,8 +176,29 @@ fn resolve_model_command(chat: &ChatWidget, args: &str) -> Result<ModelCommand, 
         synthesized = codex_protocol::openai_models::ModelPreset::from(info);
         &synthesized
     };
+    let resolved_provider = explicit_provider
+        .as_deref()
+        .or(model.model_provider.as_deref())
+        .or_else(|| {
+            (crate::app_server_session::models::is_hanzo_ecosystem_config(&chat.config)
+                && hanzo::catalog::is_local_only(&model.model))
+            .then_some("local")
+        })
+        .or_else(|| {
+            (chat.config.model_provider_id == "local"
+                && hanzo::catalog::is_first_party(&model.model)
+                && !hanzo::catalog::is_local_only(&model.model)
+                && chat.config.model_providers.contains_key("hanzo"))
+            .then_some("hanzo")
+        });
+    let qualified_model = match resolved_provider {
+        Some(provider) if provider != chat.config.model_provider_id => {
+            format!("{provider}::{}", model.model)
+        }
+        _ => model.model.clone(),
+    };
     Ok(ModelCommand {
-        model: model.model.clone(),
+        model: qualified_model,
         effort: resolve_reasoning_effort(chat, &args, model)?,
         service_tier: resolve_service_tier(chat, args.speed.as_deref(), model)?,
     })

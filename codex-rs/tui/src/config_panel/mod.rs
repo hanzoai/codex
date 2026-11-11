@@ -418,6 +418,16 @@ fn settings(tui: &Tui, status: ConfigPanelStatus) -> Vec<ConfigSetting> {
             value: ConfigEditor::ModelProviders.value(tui, status),
         },
         ConfigSetting {
+            section: ConfigSection::Sessions,
+            label: "Third-party cloud models",
+            description: "Show OpenAI, Anthropic, Google, DeepSeek, and other third-party cloud models in /model",
+            keywords: "models cloud third party anthropic openai google deepseek qwen",
+            value: ConfigSettingValue::Toggle {
+                setting: ConfigToggle::ThirdPartyModels,
+                enabled: ConfigToggle::ThirdPartyModels.enabled(tui),
+            },
+        },
+        ConfigSetting {
             section: ConfigSection::TextSelection,
             label: "Copy on select",
             description: "Copy transcript, footer, and composer selections on release; Auto follows terminal defaults",

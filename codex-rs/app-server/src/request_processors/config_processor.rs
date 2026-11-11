@@ -162,15 +162,24 @@ impl ConfigRequestProcessor {
         &self,
         params: ConfigValueWriteParams,
     ) -> Result<ClientResponsePayload, JSONRPCErrorError> {
-        self.handle_config_mutation_result(self.write_value(params).await)
-            .await
-            .map(ClientResponsePayload::ConfigValueWrite)
+        let switched_default_provider = params.key_path == "model_provider";
+        let response = self
+            .handle_config_mutation_result(self.write_value(params).await)
+            .await?;
+        if switched_default_provider {
+            self.hot_reload_model_provider().await;
+        }
+        Ok(ClientResponsePayload::ConfigValueWrite(response))
     }
 
     pub(crate) async fn batch_write(
         &self,
         params: ConfigBatchWriteParams,
     ) -> Result<ClientResponsePayload, JSONRPCErrorError> {
+        let switched_default_provider = params
+            .edits
+            .iter()
+            .any(|edit| edit.key_path == "model_provider");
         let session_defaults_only = !params.edits.is_empty()
             && params.edits.iter().all(|edit| {
                 matches!(
@@ -189,6 +198,9 @@ impl ConfigRequestProcessor {
             if should_reload {
                 reload_user_config(&self.config_manager, &self.thread_manager).await;
             }
+        }
+        if switched_default_provider {
+            self.hot_reload_model_provider().await;
         }
         Ok(ClientResponsePayload::ConfigBatchWrite(response))
     }
@@ -237,7 +249,41 @@ impl ConfigRequestProcessor {
         self.model_catalog
             .invalidate_if_current_provider(&response.provider.id)
             .await;
+        if let Ok(latest) = self.load_latest_config(/*fallback_cwd*/ None).await
+            && latest.model_provider_id == response.provider.id
+        {
+            self.hot_switch_threads_provider(
+                latest.model_provider_id.clone(),
+                latest.model_provider.clone(),
+            )
+            .await;
+        }
         Ok(response)
+    }
+
+    async fn hot_reload_model_provider(&self) {
+        self.model_catalog.invalidate().await;
+        if let Ok(latest) = self.load_latest_config(/*fallback_cwd*/ None).await {
+            self.hot_switch_threads_provider(
+                latest.model_provider_id.clone(),
+                latest.model_provider.clone(),
+            )
+            .await;
+        }
+    }
+
+    async fn hot_switch_threads_provider(
+        &self,
+        provider_id: String,
+        provider_info: codex_model_provider_info::ModelProviderInfo,
+    ) {
+        for thread_id in self.thread_manager.list_thread_ids().await {
+            if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
+                thread
+                    .switch_model_provider(provider_id.clone(), provider_info.clone())
+                    .await;
+            }
+        }
     }
 
     pub(crate) async fn model_provider_capabilities_read(

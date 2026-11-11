@@ -161,7 +161,6 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
     )?;
     let server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
     let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
-    let original = session.model_provider_id.clone();
     app.chat_widget.handle_thread_session_quiet(session);
     let (view, load) = loading();
     app.chat_widget.show_selection_view(view);
@@ -213,12 +212,12 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
 
     // Wait for the RPC without dispatching its completion on the original event channel.
     let backend = server.backend_id();
-    assert!(*app.provider_writes[&backend].lock().await);
+    assert!(!*app.provider_writes[&backend].lock().await);
     let other =
         ModelCatalog::new(Vec::new()).for_backend(BackendId::new(), &mut app.provider_writes);
     assert!(!other.provider_may_have_changed());
     let reconnected = ModelCatalog::new(Vec::new()).for_backend(backend, &mut app.provider_writes);
-    assert!(reconnected.provider_may_have_changed());
+    assert!(!reconnected.provider_may_have_changed());
     app.chat_widget.show_selection_view(SelectionViewParams {
         view_id: Some("test_overlay"),
         items: vec![back()],
@@ -230,7 +229,7 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
         &server,
         next_provider_event(&mut events).await,
     );
-    assert!(app.chat_widget.model_picker_unavailable().is_some());
+    assert!(app.chat_widget.model_picker_unavailable().is_none());
     handle(
         &mut app,
         &mut tui,
@@ -246,7 +245,7 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
     assert!(app.chat_widget.active_view_is("test_overlay"));
     app.chat_widget.handle_key_event(KeyCode::Esc.into());
     app.chat_widget.handle_key_event(KeyCode::Home.into());
-    assert_eq!(app.chat_widget.config_ref().model_provider_id, original);
+    assert_eq!(app.chat_widget.config_ref().model_provider_id, "gateway");
     insta::assert_snapshot!(
         "saved_default_provider",
         render_bottom_popup(&app.chat_widget, /*width*/ 100)
@@ -275,8 +274,8 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
             _ => None,
         })
         .last()
-        .expect("restart hint in history");
-    insta::assert_snapshot!(cell.display_lines(/*width*/ 160)[0].to_string(), @"• /new now uses openai. Restart the app server and TUI to refresh /model.");
+        .expect("switch notice in history");
+    insta::assert_snapshot!(cell.display_lines(/*width*/ 160)[0].to_string(), @"• Switched model provider to openai.");
     server.shutdown().await?;
     Ok(())
 }

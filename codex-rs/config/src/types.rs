@@ -948,6 +948,11 @@ pub struct Tui {
     #[serde(default)]
     pub collapse_turn_details: bool,
 
+    /// Show third-party cloud models (OpenAI, Anthropic, Google, DeepSeek, Qwen, etc.)
+    /// from Hanzo Cloud in `/model`. Defaults to `false`.
+    #[serde(default)]
+    pub show_third_party_models: bool,
+
     /// Preferred docked sidebar width as a percentage of the terminal. Defaults to one third.
     #[serde(default)]
     #[schemars(range(min = 1, max = 99))]

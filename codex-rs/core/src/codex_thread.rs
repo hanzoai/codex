@@ -1327,6 +1327,17 @@ impl CodexThread {
         .await
     }
 
+    /// Hot-switches the active session's model provider in place without restarting the thread.
+    pub async fn switch_model_provider(
+        &self,
+        provider_id: String,
+        provider_info: codex_model_provider_info::ModelProviderInfo,
+    ) {
+        self.session
+            .switch_model_provider(provider_id, provider_info)
+            .await;
+    }
+
     /// Revokes enterprise MCP authority from the current owner after a failed reload.
     pub async fn disable_mcp_enterprise_auth(&self) {
         self.session.disable_mcp_enterprise_auth().await;

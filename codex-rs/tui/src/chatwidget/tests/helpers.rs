@@ -1329,11 +1329,13 @@ pub(super) fn get_available_model(chat: &ChatWidget, model: &str) -> ModelPreset
         .model_catalog
         .try_list_models()
         .expect("models lock available");
-    models
+    let mut preset = models
         .iter()
         .find(|&preset| preset.model == model)
         .cloned()
-        .unwrap_or_else(|| panic!("{model} preset not found"))
+        .unwrap_or_else(|| panic!("{model} preset not found"));
+    preset.show_in_picker = true;
+    preset
 }
 
 pub(super) fn render_bottom_first_row(chat: &ChatWidget, width: u16) -> String {
