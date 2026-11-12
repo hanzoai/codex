@@ -4876,26 +4876,10 @@ impl ChatComposer {
             .render(remote_images_rect, buf);
         }
         if !textarea_rect.is_empty() {
-            let prompt = if self.draft.input_enabled {
-                if self.draft.is_bash_mode {
-                    Span::from("!").light_red().bold()
-                } else if self.luna_reserve_active {
-                    // Reserve keeps one arrow at every reasoning effort; only its foreground changes.
-                    crate::ui_consts::PROMPT_MARK
-                        .fg(crate::terminal_palette::best_color((246, 197, 67)))
-                        .bold()
-                } else if let Some(tier) = self.effort_tier {
-                    let charge = self
-                        .effort_ignition
-                        .as_ref()
-                        .map(EffortIgnition::charge_alpha)
-                        .unwrap_or(1.0);
-                    tier.prompt(charge)
-                } else {
-                    crate::ui_consts::PROMPT_MARK.bold()
-                }
+            let prompt = if self.draft.input_enabled && self.draft.is_bash_mode {
+                Span::from("!").light_red().bold()
             } else {
-                crate::ui_consts::PROMPT_MARK.dim()
+                "›".bold().dim()
             };
             buf.set_span(
                 textarea_rect.x - LIVE_PREFIX_COLS,

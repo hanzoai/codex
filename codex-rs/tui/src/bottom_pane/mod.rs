@@ -162,6 +162,10 @@ mod memories_settings_view;
 mod mention_usage;
 pub(crate) use mention_usage::MentionUsage;
 mod mentions_v2;
+mod model_switcher_view;
+pub(crate) use model_switcher_view::ModelSwitcherEffortOption;
+pub(crate) use model_switcher_view::ModelSwitcherItem;
+pub(crate) use model_switcher_view::ModelSwitcherView;
 mod picker_presets;
 mod picker_rows;
 mod picker_style;
@@ -1705,6 +1709,14 @@ impl BottomPane {
             .iter()
             .rfind(|view| view.view_id() == Some(view_id))
             .and_then(|view| view.selected_index())
+    }
+
+    pub(crate) fn search_query_for_present_view(&self, view_id: &'static str) -> Option<String> {
+        self.view_stack
+            .iter()
+            .rfind(|view| view.view_id() == Some(view_id))
+            .and_then(|view| view.search_query())
+            .map(str::to_string)
     }
 
     pub(crate) fn active_tab_id_for_active_view(&self, view_id: &'static str) -> Option<&str> {

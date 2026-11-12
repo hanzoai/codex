@@ -104,8 +104,8 @@ impl EffortTier {
 
     fn prompt_glyph(self) -> &'static str {
         match self {
-            Self::Max => crate::ui_consts::PROMPT_MARK,
-            Self::Ultra => "»",
+            Self::Max => "›",
+            Self::Ultra => "›",
         }
     }
 

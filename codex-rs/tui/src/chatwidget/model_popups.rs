@@ -215,134 +215,12 @@ impl ChatWidget {
             self.open_luna_reserve_model_popup(presets, MODEL_SELECTION_VIEW_ID);
             return;
         }
-        let (presets, _is_hanzo_context) = self.prepare_picker_presets(presets);
-
-        let current_label = presets
-            .iter()
-            .find(|preset| self.is_current_picker_preset(preset))
-            .map(|preset| preset.display_name.clone())
-            .unwrap_or_else(|| self.model_display_name().to_string());
-
-        let (mut auto_presets, other_presets): (Vec<ModelPreset>, Vec<ModelPreset>) = presets
+        let presets: Vec<ModelPreset> = presets
             .into_iter()
-            .partition(|preset| Self::is_auto_model(&preset.model));
-
-        if auto_presets.is_empty() {
-            self.open_all_models_popup_with_view_id(other_presets, MODEL_SELECTION_VIEW_ID);
-            return;
-        }
-
-        auto_presets.sort_by_key(|preset| Self::auto_model_order(&preset.model));
-        let mut model_ids: Vec<String> = auto_presets
-            .iter()
-            .map(|preset| self.qualified_picker_model(preset))
-            .collect();
-        let mut items: Vec<SelectionItem> = auto_presets
-            .into_iter()
-            .map(|preset| {
-                let description =
-                    (!preset.description.is_empty()).then_some(preset.description.clone());
-                let category_tag = preset
-                    .model_provider
-                    .as_ref()
-                    .map(|provider| format!("[{provider}]"));
-                let search_value = Some(format!(
-                    "{} {} {} {}",
-                    preset.display_name,
-                    preset.model,
-                    preset.model_provider.as_deref().unwrap_or_default(),
-                    preset.description
-                ));
-                let qualified_model = self.qualified_picker_model(&preset);
-                let is_current = self.is_current_picker_preset(&preset);
-                let requires_advanced_selection =
-                    Self::is_advanced_reasoning_effort(&preset.default_reasoning_effort)
-                        || preset
-                            .supported_reasoning_efforts
-                            .iter()
-                            .any(|option| Self::is_advanced_reasoning_effort(&option.effort));
-                let actions: Vec<SelectionAction> = if requires_advanced_selection {
-                    let preset_for_action = preset.clone();
-                    let scoped = self.scope_model_picker_event();
-                    vec![Box::new(move |tx| {
-                        tx.send(scoped(AppEvent::OpenReasoningPopup {
-                            model: preset_for_action.clone(),
-                        }));
-                    })]
-                } else {
-                    let should_prompt_plan_mode_scope = self
-                        .should_prompt_plan_mode_reasoning_scope(
-                            qualified_model.as_str(),
-                            Some(preset.default_reasoning_effort.clone()),
-                        );
-                    self.model_selection_actions(
-                        qualified_model.clone(),
-                        Some(preset.default_reasoning_effort.clone()),
-                        should_prompt_plan_mode_scope,
-                    )
-                };
-                SelectionItem {
-                    name: preset.display_name.clone(),
-                    category_tag,
-                    description,
-                    search_value,
-                    is_current,
-                    secondary_action: if requires_advanced_selection {
-                        None
-                    } else {
-                        self.session_model_selection_action(
-                            qualified_model,
-                            Some(preset.default_reasoning_effort),
-                        )
-                    },
-                    actions,
-                    dismiss_on_select: !requires_advanced_selection,
-                    dismiss_parent_on_child_accept: requires_advanced_selection,
-                    ..Default::default()
-                }
-            })
+            .filter(|preset| preset.show_in_picker && !Self::is_auto_model(&preset.model))
             .collect();
 
-        if !other_presets.is_empty() {
-            model_ids.push("All models".to_string());
-            let scoped = self.scope_model_picker_event();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(scoped(AppEvent::OpenAllModelsPopup));
-            })];
-
-            let is_current = !items.iter().any(|item| item.is_current);
-            let description = Some(format!(
-                "Choose a specific model and reasoning level (current: {current_label})"
-            ));
-
-            items.push(SelectionItem {
-                name: "All models".to_string(),
-                description,
-                search_value: Some(format!("All models {current_label}")),
-                is_current,
-                actions,
-                dismiss_on_select: true,
-                ..Default::default()
-            });
-        }
-
-        let header = self.model_menu_header(
-            "Select Model",
-            "Pick a quick auto mode or browse all models.",
-        );
-        self.show_model_selection_view(
-            model_ids,
-            SelectionViewParams {
-                view_id: Some(MODEL_SELECTION_VIEW_ID),
-                items,
-                header,
-                auto_number_shortcuts: false,
-                is_searchable: true,
-                search_mode: SearchMode::OnDemand(key_hint::plain(KeyCode::Char('/'))),
-                search_placeholder: Some("Type to filter models".to_string()),
-                ..SelectionViewParams::picker()
-            },
-        );
+        self.open_all_models_popup_with_view_id(presets, MODEL_SELECTION_VIEW_ID);
     }
 
     pub(super) fn is_auto_model(model: &str) -> bool {
@@ -391,77 +269,103 @@ impl ChatWidget {
             return;
         }
 
-        let mut items: Vec<SelectionItem> = Vec::new();
-        let model_ids = presets
+        let _ = is_hanzo_context;
+        let active_effort = self.effective_reasoning_effort();
+        let model_ids: Vec<String> = presets
             .iter()
             .map(|preset| self.qualified_picker_model(preset))
             .collect();
-        for preset in presets.into_iter() {
-            let description =
-                (!preset.description.is_empty()).then_some(preset.description.to_string());
-            let category_tag = preset
-                .model_provider
-                .as_ref()
-                .map(|provider| format!("[{provider}]"));
-            let search_value = Some(format!(
-                "{} {} {} {}",
-                preset.display_name,
-                preset.model,
-                preset.model_provider.as_deref().unwrap_or_default(),
-                preset.description
-            ));
-            let is_current = self.is_current_picker_preset(&preset);
-            let qualified_model = self.qualified_picker_model(&preset);
-            let direct_effort = match preset.supported_reasoning_efforts.as_slice() {
-                [] => Some(preset.default_reasoning_effort.clone()),
-                [option] => Some(option.effort.clone()),
-                _ => None,
-            }
-            .filter(|effort| !Self::is_advanced_reasoning_effort(effort));
-            let single_supported_effort = direct_effort.is_some();
-            let preset_for_action = preset.clone();
-            let scoped = self.scope_model_picker_event();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                let preset_for_event = preset_for_action.clone();
-                tx.send(scoped(AppEvent::OpenReasoningPopup {
-                    model: preset_for_event,
-                }));
-            })];
-            items.push(SelectionItem {
-                name: preset.display_name.clone(),
-                category_tag,
-                description,
-                search_value,
-                is_current,
-                secondary_action: direct_effort.and_then(|effort| {
-                    self.session_model_selection_action(qualified_model, Some(effort))
-                }),
-                actions,
-                dismiss_on_select: single_supported_effort,
-                dismiss_parent_on_child_accept: !single_supported_effort,
-                ..Default::default()
-            });
-        }
+        let default_efforts = crate::bottom_pane::ModelSwitcherView::default_effort_options();
 
-        let subtitle = if is_hanzo_context && !self.local_settings.tui.show_third_party_models {
-            "Press / to filter · Enable third-party cloud models in /config"
-        } else {
-            ""
-        };
-        let header = self.model_menu_header("Select Model and Effort", subtitle);
-        self.show_model_selection_view(
-            model_ids,
-            SelectionViewParams {
-                view_id: Some(view_id),
-                items,
-                header,
-                auto_number_shortcuts: false,
-                is_searchable: true,
-                search_mode: SearchMode::OnDemand(key_hint::plain(KeyCode::Char('/'))),
-                search_placeholder: Some("Type to filter models".to_string()),
-                ..SelectionViewParams::picker()
-            },
+        let items: Vec<crate::bottom_pane::ModelSwitcherItem> = presets
+            .into_iter()
+            .map(|preset| {
+                let is_current = self.is_current_picker_preset(&preset);
+                let qualified_model = self.qualified_picker_model(&preset);
+                let target_effort = if is_current {
+                    active_effort
+                        .clone()
+                        .unwrap_or(preset.default_reasoning_effort.clone())
+                } else {
+                    preset.default_reasoning_effort.clone()
+                };
+                let initial_effort_idx = match target_effort {
+                    ReasoningEffortConfig::Low | ReasoningEffortConfig::Minimal => 0,
+                    ReasoningEffortConfig::Medium => 1,
+                    _ => 2,
+                };
+                let actions_low = self.model_selection_actions(
+                    qualified_model.clone(),
+                    Some(ReasoningEffortConfig::Low),
+                    self.should_prompt_plan_mode_reasoning_scope(
+                        qualified_model.as_str(),
+                        Some(ReasoningEffortConfig::Low),
+                    ),
+                );
+                let actions_medium = self.model_selection_actions(
+                    qualified_model.clone(),
+                    Some(ReasoningEffortConfig::Medium),
+                    self.should_prompt_plan_mode_reasoning_scope(
+                        qualified_model.as_str(),
+                        Some(ReasoningEffortConfig::Medium),
+                    ),
+                );
+                let actions_high = self.model_selection_actions(
+                    qualified_model.clone(),
+                    Some(ReasoningEffortConfig::High),
+                    self.should_prompt_plan_mode_reasoning_scope(
+                        qualified_model.as_str(),
+                        Some(ReasoningEffortConfig::High),
+                    ),
+                );
+
+                let on_select: std::sync::Arc<
+                    dyn Fn(&crate::app_event_sender::AppEventSender, ReasoningEffortConfig)
+                        + Send
+                        + Sync,
+                > = std::sync::Arc::new(move |tx, effort| {
+                    let actions = match effort {
+                        ReasoningEffortConfig::Low | ReasoningEffortConfig::Minimal => &actions_low,
+                        ReasoningEffortConfig::Medium => &actions_medium,
+                        _ => &actions_high,
+                    };
+                    for action in actions {
+                        action(tx);
+                    }
+                });
+
+                crate::bottom_pane::ModelSwitcherItem {
+                    model: qualified_model,
+                    display_name: preset.display_name,
+                    is_current,
+                    efforts: default_efforts.clone(),
+                    initial_effort_idx,
+                    on_select,
+                }
+            })
+            .collect();
+
+        let existing_index = self.bottom_pane.selected_index_for_present_view(view_id);
+        let existing_query = self.bottom_pane.search_query_for_present_view(view_id);
+        let selected_model = existing_index.and_then(|idx| self.model_popup_model_ids.get(idx));
+        let initial_selected_idx = model_ids
+            .iter()
+            .position(|model| Some(model) == selected_model);
+        self.model_popup_model_ids = model_ids;
+
+        let view = crate::bottom_pane::ModelSwitcherView::new(
+            Some(view_id),
+            items,
+            initial_selected_idx,
+            existing_query,
+            self.app_event_tx.clone(),
         );
+        if existing_index.is_some() {
+            self.bottom_pane
+                .replace_view_if_present(view_id, Box::new(view));
+        } else {
+            self.bottom_pane.show_view(Box::new(view));
+        }
     }
 
     fn model_selection_actions(

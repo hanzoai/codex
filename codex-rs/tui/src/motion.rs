@@ -78,7 +78,7 @@ pub(crate) fn activity_indicator(
         MotionMode::Animated => Some(animated_activity_indicator(start_time)),
         MotionMode::Reduced => match reduced_motion_indicator {
             ReducedMotionIndicator::Hidden => None,
-            ReducedMotionIndicator::StaticBullet => Some("•".dim()),
+            ReducedMotionIndicator::StaticBullet => Some("●".dim()),
         },
     }
 }
@@ -169,7 +169,7 @@ fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
         .map(|level| level.has_16m)
         .unwrap_or(false)
     {
-        let style = shimmer_spans("•")
+        let style = shimmer_spans("●")
             .into_iter()
             .next()
             .map(|span| span.style)

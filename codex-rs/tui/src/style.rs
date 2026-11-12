@@ -98,17 +98,9 @@ pub(crate) fn shortcut_hud_style() -> Style {
     })
 }
 
-/// Submitted prompts use a lighter fill than the editable composer in either theme.
+/// Submitted prompts use the same fill as the editable composer in either theme.
 pub(crate) fn history_prompt_style() -> Style {
-    let Some(background) = default_bg() else {
-        return history_prompt_fallback(effective_stdout_color_level());
-    };
-    let (foreground, alpha) = if is_light(background) {
-        ((0, 0, 0), 0.02)
-    } else {
-        ((255, 255, 255), 0.16)
-    };
-    Style::default().bg(best_color(blend(foreground, background, alpha)))
+    user_message_style()
 }
 
 // These grays are exact entries in the xterm extended palette and have 8.4:1 contrast.
