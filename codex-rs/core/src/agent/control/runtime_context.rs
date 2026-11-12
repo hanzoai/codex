@@ -114,6 +114,7 @@ impl LocalAgentRuntime {
             .remove(&root_thread_id)
             .unwrap_or_default()
             .into_iter()
+            .filter(|(_, meta)| meta.ownership != crate::agent::types::AgentOwnership::Ownerless)
             .map(|(child_thread_id, _)| child_thread_id)
             .rev()
             .collect::<Vec<_>>();
@@ -121,8 +122,10 @@ impl LocalAgentRuntime {
         while let Some(thread_id) = stack.pop() {
             descendants.push(thread_id);
             if let Some(children) = children_by_parent.remove(&thread_id) {
-                for (child_thread_id, _) in children.into_iter().rev() {
-                    stack.push(child_thread_id);
+                for (child_thread_id, meta) in children.into_iter().rev() {
+                    if meta.ownership != crate::agent::types::AgentOwnership::Ownerless {
+                        stack.push(child_thread_id);
+                    }
                 }
             }
         }

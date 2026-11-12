@@ -585,6 +585,7 @@ impl LocalAgentControl {
             agent_path,
             agent_nickname,
             agent_role,
+            ..Default::default()
         })
     }
 

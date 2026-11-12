@@ -104,6 +104,8 @@ pub(super) async fn create_spawn(
     task_name: AgentPath,
     reservation: HostThreadSpawnReservation,
 ) -> std::result::Result<ThreadSpawnResult, ThreadSpawnError> {
+    let ownership = request.options.ownership;
+    let parent_turn_id = request.options.parent_turn_id.clone();
     let (mut options, inheritance, client_metadata) =
         Box::pin(prepare_spawn_inputs(parent, request)).await?;
     let caller = parent.session.thread_id;
@@ -177,6 +179,9 @@ pub(super) async fn create_spawn(
                 agent_path: Some(task_name.clone()),
                 agent_nickname: child.thread.session_source.get_nickname(),
                 agent_role: child.thread.session_source.get_agent_role(),
+                ownership,
+                parent_thread_id: Some(caller),
+                parent_turn_id,
             },
             status,
         },

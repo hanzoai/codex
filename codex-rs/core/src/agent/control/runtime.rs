@@ -326,6 +326,27 @@ impl LocalAgentRuntime {
         self.shutdown_state.record_failure(failure);
     }
 
+    pub(crate) async fn interrupt_task_owned_children(
+        &self,
+        parent_thread_id: ThreadId,
+        parent_turn_id: &str,
+    ) {
+        let child_ids = self
+            .registry
+            .task_owned_child_ids(parent_thread_id, parent_turn_id);
+        if child_ids.is_empty() {
+            return;
+        }
+        let Some(manager) = self.manager.upgrade() else {
+            return;
+        };
+        for child_id in child_ids {
+            if let Ok(child_thread) = manager.get_thread(child_id).await {
+                Box::pin(child_thread.session.interrupt_task()).await;
+            }
+        }
+    }
+
     pub(crate) fn generate_thread_id(&self) -> ThreadId {
         (self.thread_id_generator)()
     }

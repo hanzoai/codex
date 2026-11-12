@@ -231,6 +231,25 @@ impl AgentRegistry {
             .collect()
     }
 
+    pub(crate) fn task_owned_child_ids(
+        &self,
+        parent_thread_id: ThreadId,
+        parent_turn_id: &str,
+    ) -> Vec<ThreadId> {
+        self.active_agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .agent_tree
+            .values()
+            .filter(|metadata| {
+                metadata.ownership == crate::agent::types::AgentOwnership::Task
+                    && metadata.parent_thread_id == Some(parent_thread_id)
+                    && metadata.parent_turn_id.as_deref() == Some(parent_turn_id)
+            })
+            .filter_map(|metadata| metadata.agent_id)
+            .collect()
+    }
+
     fn register_spawned_thread(&self, agent_metadata: AgentMetadata) {
         let Some(thread_id) = agent_metadata.agent_id else {
             return;

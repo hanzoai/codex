@@ -502,6 +502,8 @@ fn validate_dynamic_tools(tools: &[DynamicToolSpec]) -> Result<(), String> {
     Ok(())
 }
 
+type ThreadStartIdempotencySlot = Arc<tokio::sync::Mutex<Option<(ThreadStartResponse, String)>>>;
+
 #[derive(Clone)]
 pub(crate) struct ThreadRequestProcessor {
     pub(super) auth_manager: Arc<AuthManager>,
@@ -523,6 +525,8 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) skills_watcher: Arc<SkillsWatcher>,
     pub(super) turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
     pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
+    pub(super) thread_start_idempotency:
+        Arc<tokio::sync::Mutex<HashMap<String, ThreadStartIdempotencySlot>>>,
 }
 
 /// Whether resume attaches a client or restores a cold runtime during daemon startup.
@@ -584,6 +588,7 @@ impl ThreadRequestProcessor {
             skills_watcher,
             turn_cost_worker,
             initial_config_warnings: Arc::new(initial_config_warnings),
+            thread_start_idempotency: Arc::default(),
         }
     }
 
@@ -1288,6 +1293,7 @@ impl ThreadRequestProcessor {
             selected_capability_roots,
             mock_experimental_field: _mock_experimental_field,
             experimental_raw_events,
+            request_id: client_request_id,
             personality,
             multi_agent_mode: _multi_agent_mode,
             ephemeral,
@@ -1298,6 +1304,40 @@ impl ThreadRequestProcessor {
             daybreak_enabled,
             environments,
         } = params;
+        let idempotency_guard = if let Some(key) = client_request_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+        {
+            let slot = {
+                let mut map = self.thread_start_idempotency.lock().await;
+                Arc::clone(map.entry(key.to_owned()).or_default())
+            };
+            let guard = slot.lock_owned().await;
+            if let Some((cached_response, cached_originator)) = guard.as_ref()
+                && let Ok(existing_id) = ThreadId::from_string(&cached_response.thread.id)
+                && self.thread_manager.get_thread(existing_id).await.is_ok()
+            {
+                let _ = self
+                    .ensure_conversation_listener(
+                        existing_id,
+                        request_id.connection_id,
+                        experimental_raw_events,
+                    )
+                    .await;
+                self.outgoing
+                    .send_response_with_thread_originator(
+                        request_id,
+                        cached_response.clone(),
+                        cached_originator.clone(),
+                    )
+                    .await;
+                return Ok(());
+            }
+            Some(guard)
+        } else {
+            None
+        };
         if matches!(
             history_mode,
             Some(codex_app_server_protocol::ThreadHistoryMode::Paginated)
@@ -1388,6 +1428,7 @@ impl ThreadRequestProcessor {
                 experimental_raw_events,
                 request_trace,
                 initial_config_warnings,
+                idempotency_guard,
             )
             .await
             {
@@ -1470,6 +1511,9 @@ impl ThreadRequestProcessor {
         experimental_raw_events: bool,
         request_trace: Option<W3cTraceContext>,
         initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
+        idempotency_guard: Option<
+            tokio::sync::OwnedMutexGuard<Option<(ThreadStartResponse, String)>>,
+        >,
     ) -> Result<(), JSONRPCErrorError> {
         let thread_start_started_at = std::time::Instant::now();
         let requested_cwd = typesafe_overrides.cwd.clone();
@@ -1771,6 +1815,9 @@ impl ThreadRequestProcessor {
             multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
         };
         let notif = thread_started_notification(thread);
+        if let Some(mut guard) = idempotency_guard {
+            *guard = Some((response.clone(), thread_originator.clone()));
+        }
         listener_task_context
             .outgoing
             .send_response_with_thread_originator(request_id, response, thread_originator)
@@ -4008,6 +4055,11 @@ impl ThreadRequestProcessor {
                     completion
                         .await
                         .map_err(|_| thread_closing_for_resume(&params.thread_id))?;
+                    if params.resume_interrupted
+                        && let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
+                    {
+                        let _ = self.continue_unclosed_rollout_turn(thread_id).await;
+                    }
                     return Ok(ControlFlow::Break(()));
                 }
                 RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
@@ -4020,6 +4072,8 @@ impl ThreadRequestProcessor {
                     if let Some(saved) = saved {
                         self.continue_daemon_turn(&params.thread_id, saved.clone())
                             .await;
+                    } else if params.resume_interrupted {
+                        let _ = self.continue_unclosed_rollout_turn(thread_id).await;
                     }
                     return Ok(ControlFlow::Break(()));
                 }
@@ -4046,7 +4100,11 @@ impl ThreadRequestProcessor {
             personality,
             exclude_turns,
             initial_turns_page,
+            resume_interrupted,
         } = params.clone();
+        let should_resume_interrupted = resume_interrupted
+            || std::env::var_os("HANZO_RESUME_INTERRUPTED_TURNS")
+                .is_some_and(|val| val == "1" || val == "true");
         let include_turns = !exclude_turns;
 
         let prepared_model_context = prepared_config
@@ -4404,6 +4462,8 @@ impl ThreadRequestProcessor {
                     if let ThreadResumeTarget::DaemonRecovery(Some(saved)) = target {
                         self.continue_daemon_turn(&thread_id.to_string(), saved.clone())
                             .await;
+                    } else if should_resume_interrupted {
+                        let _ = self.continue_unclosed_rollout_turn(thread_id).await;
                     }
                     let state = self.thread_state_manager.thread_state(thread_id).await;
                     self.ensure_listener_task_running(thread_id, Arc::clone(&codex_thread), state)
@@ -4615,6 +4675,9 @@ impl ThreadRequestProcessor {
                 self.thread_goal_processor
                     .emit_resume_goal_snapshot(thread_id)
                     .await;
+                if should_resume_interrupted {
+                    let _ = self.continue_unclosed_rollout_turn(thread_id).await;
+                }
                 codex_thread
                     .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
                     .await;

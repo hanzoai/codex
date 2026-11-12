@@ -1065,6 +1065,10 @@ impl Session {
 
         trace!(task_kind = ?task.kind, sub_id, "aborting running task");
         task.cancellation_token.cancel();
+        self.services
+            .local_agent_runtime
+            .interrupt_task_owned_children(self.thread_id, &sub_id)
+            .await;
         if reason == TurnAbortReason::Interrupted
             && task
                 .turn_context

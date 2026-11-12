@@ -5606,3 +5606,45 @@ fn feedback_paths_preserve_native_wire_spelling_before_host_validation() {
         );
     }
 }
+
+#[test]
+fn durable_request_id_and_resume_interrupted_aliases_deserialize() {
+    for key in ["clientUserMessageId", "requestId", "request_id"] {
+        let turn_start: TurnStartParams = serde_json::from_value(json!({
+            "threadId": "thread-1",
+            "input": [{ "type": "text", "text": "hi" }],
+            key: "req-42",
+        }))
+        .expect("TurnStartParams should accept idempotency key");
+        assert_eq!(turn_start.client_user_message_id.as_deref(), Some("req-42"));
+
+        let turn_steer: TurnSteerParams = serde_json::from_value(json!({
+            "threadId": "thread-1",
+            "expectedTurnId": "turn-1",
+            "input": [{ "type": "text", "text": "follow up" }],
+            key: "steer-42",
+        }))
+        .expect("TurnSteerParams should accept idempotency key");
+        assert_eq!(
+            turn_steer.client_user_message_id.as_deref(),
+            Some("steer-42")
+        );
+    }
+
+    for key in ["requestId", "request_id"] {
+        let thread_start: ThreadStartParams = serde_json::from_value(json!({
+            key: "start-99",
+        }))
+        .expect("ThreadStartParams should accept requestId");
+        assert_eq!(thread_start.request_id.as_deref(), Some("start-99"));
+    }
+
+    for key in ["resumeInterrupted", "resume_interrupted"] {
+        let resume: ThreadResumeParams = serde_json::from_value(json!({
+            "threadId": "thread-1",
+            key: true,
+        }))
+        .expect("ThreadResumeParams should accept resumeInterrupted");
+        assert!(resume.resume_interrupted);
+    }
+}

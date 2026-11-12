@@ -81,6 +81,136 @@ fn validate_response_item_image_urls(items: &[ResponseItem]) -> Result<(), JSONR
     Ok(())
 }
 
+type TurnIdempotencySlot = Arc<tokio::sync::Mutex<Option<TurnStartResponse>>>;
+
+fn find_persisted_turn_for_client_id(
+    history: &[codex_rollout::RolloutItem],
+    client_id: &str,
+) -> Option<Turn> {
+    use codex_protocol::protocol::EventMsg;
+    use codex_rollout::RolloutItem;
+
+    let mut current_turn_id: Option<&str> = None;
+    let mut current_root_turn_id: Option<&str> = None;
+    let mut matched: Option<(usize, String, Option<String>)> = None;
+
+    for (idx, item) in history.iter().enumerate() {
+        match item {
+            RolloutItem::EventMsg(EventMsg::TurnStarted(ev)) => {
+                current_turn_id = Some(ev.turn_id.as_str());
+                current_root_turn_id = ev.root_turn_id.as_deref().or_else(|| {
+                    ev.turn_attribution
+                        .as_ref()
+                        .and_then(|attr| attr.root_turn_id.as_deref())
+                });
+            }
+            RolloutItem::TurnContext(ctx) => {
+                if let Some(tid) = ctx.turn_id.as_deref() {
+                    if current_turn_id != Some(tid) {
+                        current_turn_id = Some(tid);
+                        current_root_turn_id = ctx.root_turn_id.as_deref();
+                    } else if current_root_turn_id.is_none() {
+                        current_root_turn_id = ctx.root_turn_id.as_deref();
+                    }
+                } else if current_root_turn_id.is_none() {
+                    current_root_turn_id = ctx.root_turn_id.as_deref();
+                }
+            }
+            RolloutItem::EventMsg(EventMsg::TurnComplete(_))
+            | RolloutItem::EventMsg(EventMsg::TurnAborted(_)) => {
+                current_turn_id = None;
+                current_root_turn_id = None;
+            }
+            RolloutItem::EventMsg(EventMsg::UserMessage(ev))
+                if ev.client_id.as_deref() == Some(client_id) =>
+            {
+                let resolved = current_turn_id
+                    .map(|tid| (tid.to_string(), current_root_turn_id.map(str::to_owned)))
+                    .or_else(|| {
+                        history[idx + 1..].iter().find_map(|next| match next {
+                            RolloutItem::EventMsg(EventMsg::TurnStarted(started)) => Some((
+                                started.turn_id.clone(),
+                                started.root_turn_id.clone().or_else(|| {
+                                    started
+                                        .turn_attribution
+                                        .as_ref()
+                                        .and_then(|attr| attr.root_turn_id.clone())
+                                }),
+                            )),
+                            RolloutItem::TurnContext(ctx) => Some((
+                                ctx.turn_id.clone()?,
+                                ctx.root_turn_id.clone(),
+                            )),
+                            _ => None,
+                        })
+                    })?;
+                matched = Some((idx, resolved.0, resolved.1));
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let (match_idx, turn_id, mut root_turn_id) = matched?;
+    let mut status = TurnStatus::InProgress;
+    let mut started_at = None;
+    let mut completed_at = None;
+    let mut duration_ms = None;
+
+    for item in &history[match_idx..] {
+        match item {
+            RolloutItem::TurnContext(ctx) if ctx.turn_id.as_deref() == Some(turn_id.as_str()) => {
+                if root_turn_id.is_none() {
+                    root_turn_id = ctx.root_turn_id.clone();
+                }
+            }
+            RolloutItem::EventMsg(EventMsg::TurnComplete(done)) if done.turn_id == turn_id => {
+                status = if done.error.is_some() {
+                    TurnStatus::Failed
+                } else {
+                    TurnStatus::Completed
+                };
+                if root_turn_id.is_none() {
+                    root_turn_id = done.root_turn_id.clone();
+                }
+                started_at = done.started_at;
+                completed_at = done.completed_at;
+                duration_ms = done.duration_ms;
+                break;
+            }
+            RolloutItem::EventMsg(EventMsg::TurnAborted(aborted))
+                if aborted
+                    .turn_id
+                    .as_deref()
+                    .is_none_or(|id| id == turn_id.as_str()) =>
+            {
+                status = TurnStatus::Interrupted;
+                if root_turn_id.is_none() {
+                    root_turn_id = aborted.root_turn_id.clone();
+                }
+                started_at = aborted.started_at;
+                completed_at = aborted.completed_at;
+                duration_ms = aborted.duration_ms;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let resolved_root = root_turn_id.unwrap_or_else(|| turn_id.clone());
+    Some(Turn {
+        id: turn_id,
+        root_turn_id: Some(resolved_root),
+        items: vec![],
+        items_view: TurnItemsView::NotLoaded,
+        error: None,
+        status,
+        started_at,
+        completed_at,
+        duration_ms,
+    })
+}
+
 #[derive(Clone)]
 pub(crate) struct TurnRequestProcessor {
     thread_manager: Arc<ThreadManager>,
@@ -93,6 +223,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_watch_manager: ThreadWatchManager,
     skills_watcher: Arc<SkillsWatcher>,
     turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
+    turn_idempotency: Arc<tokio::sync::Mutex<HashMap<(ThreadId, String), TurnIdempotencySlot>>>,
 }
 
 fn map_additional_context(
@@ -163,6 +294,7 @@ impl TurnRequestProcessor {
             thread_watch_manager,
             skills_watcher,
             turn_cost_worker,
+            turn_idempotency: Arc::default(),
         }
     }
 
@@ -585,6 +717,42 @@ impl TurnRequestProcessor {
                 .inspect_err(|error| {
                     self.track_error_response(&request_id, error, /*error_type*/ None);
                 })?;
+        let idempotency_key = params
+            .client_user_message_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned);
+        let idempotency_guard = if let Some(ref key) = idempotency_key {
+            let slot = {
+                let mut map = self.turn_idempotency.lock().await;
+                Arc::clone(map.entry((thread_id, key.clone())).or_default())
+            };
+            let mut guard = slot.lock_owned().await;
+            if let Some(path) = thread.rollout_path()
+                && let Ok((history, _, _)) =
+                    codex_rollout::RolloutRecorder::load_rollout_items(&path).await
+                && let Some(persisted_turn) = find_persisted_turn_for_client_id(&history, key)
+            {
+                let response = TurnStartResponse {
+                    turn: persisted_turn,
+                };
+                self.outgoing
+                    .record_request_turn_id(&request_id, &response.turn.id)
+                    .await;
+                *guard = Some(response.clone());
+                return Ok(response);
+            }
+            if let Some(cached) = guard.as_ref() {
+                self.outgoing
+                    .record_request_turn_id(&request_id, &cached.turn.id)
+                    .await;
+                return Ok(cached.clone());
+            }
+            Some(guard)
+        } else {
+            None
+        };
         self.ensure_direct_input_allowed(&request_id, thread.as_ref())
             .await?;
         self.config_manager
@@ -798,7 +966,11 @@ impl TurnRequestProcessor {
             duration_ms: None,
         };
 
-        Ok(TurnStartResponse { turn })
+        let response = TurnStartResponse { turn };
+        if let Some(mut guard) = idempotency_guard {
+            *guard = Some(response.clone());
+        }
+        Ok(response)
     }
 
     async fn build_environment_override(
@@ -1609,5 +1781,139 @@ impl TurnRequestProcessor {
             raw_events_enabled,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod idempotency_tests {
+    use super::find_persisted_turn_for_client_id;
+    use codex_app_server_protocol::TurnStatus;
+    use codex_protocol::config_types::ModeKind;
+    use codex_protocol::models::PermissionProfile;
+    use codex_protocol::protocol::AskForApproval;
+    use codex_protocol::protocol::ErrorEvent;
+    use codex_protocol::protocol::EventMsg;
+    use codex_protocol::protocol::TurnAbortReason;
+    use codex_protocol::protocol::TurnAbortedEvent;
+    use codex_protocol::protocol::TurnCompleteEvent;
+    use codex_protocol::protocol::TurnContextItem;
+    use codex_protocol::protocol::TurnStartedEvent;
+    use codex_protocol::protocol::UserMessageEvent;
+    use codex_rollout::RolloutItem;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
+
+    fn user_msg(client_id: &str, text: &str) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            client_id: Some(client_id.to_string()),
+            message: text.to_string(),
+            ..Default::default()
+        }))
+    }
+
+    fn turn_started(turn_id: &str, root: &str) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+            turn_attribution: None,
+            turn_id: turn_id.to_string(),
+            root_turn_id: Some(root.to_string()),
+            trace_id: None,
+            started_at: Some(100),
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }))
+    }
+
+    fn turn_ctx(turn_id: &str, root: &str) -> RolloutItem {
+        RolloutItem::TurnContext(TurnContextItem {
+            turn_id: Some(turn_id.to_string()),
+            root_turn_id: Some(root.to_string()),
+            direct_only_tool_namespaces: None,
+            disabled_plugin_ids: None,
+            cwd: test_path_buf("/tmp").abs(),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            permission_profile: PermissionProfile::Disabled,
+            active_permission_profile: None,
+            model: "zen6-nano".to_string(),
+            comp_hash: None,
+            collaboration_mode: None,
+            multi_agent_version: None,
+            realtime_active: None,
+            cyber_access_program: None,
+            effort: None,
+            summary: None,
+        })
+    }
+
+    #[test]
+    fn find_persisted_turn_for_client_id_tracks_in_progress_completed_failed_and_interrupted() {
+        let mut history = vec![
+            turn_ctx("turn-1", "root-1"),
+            user_msg("req-1", "first"),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                root_turn_id: Some("root-1".to_string()),
+                turn_id: "turn-1".to_string(),
+                last_agent_message: Some("ok".to_string()),
+                error: None,
+                started_at: Some(10),
+                completed_at: Some(15),
+                duration_ms: Some(5_000),
+                time_to_first_token_ms: None,
+            })),
+            turn_ctx("turn-2", "root-2"),
+            user_msg("req-2", "second"),
+        ];
+
+        let t1 = find_persisted_turn_for_client_id(&history, "req-1").expect("req-1 present");
+        assert_eq!(t1.id, "turn-1");
+        assert_eq!(t1.root_turn_id.as_deref(), Some("root-1"));
+        assert_eq!(t1.status, TurnStatus::Completed);
+        assert_eq!(t1.duration_ms, Some(5_000));
+
+        let t2 = find_persisted_turn_for_client_id(&history, "req-2").expect("req-2 in progress");
+        assert_eq!(t2.id, "turn-2");
+        assert_eq!(t2.root_turn_id.as_deref(), Some("root-2"));
+        assert_eq!(t2.status, TurnStatus::InProgress);
+
+        assert!(find_persisted_turn_for_client_id(&history, "missing").is_none());
+
+        history.push(RolloutItem::EventMsg(EventMsg::TurnAborted(
+            TurnAbortedEvent {
+                root_turn_id: Some("root-2".to_string()),
+                turn_id: Some("turn-2".to_string()),
+                reason: TurnAbortReason::Interrupted,
+                error: None,
+                started_at: Some(20),
+                completed_at: Some(25),
+                duration_ms: Some(5_000),
+            },
+        )));
+        let t2_aborted =
+            find_persisted_turn_for_client_id(&history, "req-2").expect("req-2 interrupted");
+        assert_eq!(t2_aborted.status, TurnStatus::Interrupted);
+
+        history.push(user_msg("req-3", "third before TurnStarted"));
+        history.push(turn_started("turn-3", "root-3"));
+        history.push(RolloutItem::EventMsg(EventMsg::TurnComplete(
+            TurnCompleteEvent {
+                root_turn_id: Some("root-3".to_string()),
+                turn_id: "turn-3".to_string(),
+                last_agent_message: None,
+                error: Some(ErrorEvent {
+                    message: "boom".to_string(),
+                    codex_error_info: None,
+                    rejected_audio_file_ids: Vec::new(),
+                    misalignment: None,
+                }),
+                started_at: Some(30),
+                completed_at: Some(31),
+                duration_ms: Some(1_000),
+                time_to_first_token_ms: None,
+            },
+        )));
+        let t3 = find_persisted_turn_for_client_id(&history, "req-3").expect("req-3 failed");
+        assert_eq!(t3.id, "turn-3");
+        assert_eq!(t3.root_turn_id.as_deref(), Some("root-3"));
+        assert_eq!(t3.status, TurnStatus::Failed);
     }
 }

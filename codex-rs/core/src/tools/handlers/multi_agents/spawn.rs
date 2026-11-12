@@ -138,6 +138,7 @@ async fn handle_spawn_agent(
                 multi_agent_v2_usage_hints: None,
                 cyber_access_program: explicit_program_for_spawn(turn),
                 cyber_access_program_source: SpawnProgramSource::ParentTurn,
+                ownership: args.ownership.unwrap_or_default(),
             },
         })
         .await
@@ -228,6 +229,8 @@ struct SpawnAgentArgs {
     reasoning_effort: Option<ReasoningEffort>,
     #[serde(default)]
     fork_context: bool,
+    #[serde(default)]
+    ownership: Option<crate::agent::types::AgentOwnership>,
 }
 
 #[derive(Debug, Serialize)]

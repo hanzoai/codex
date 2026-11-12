@@ -165,6 +165,16 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.experimentalRawEvents")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub experimental_raw_events: bool,
+    /// Optional client idempotency key for deduplicating `thread/start` retries.
+    #[serde(
+        default,
+        alias = "requestId",
+        alias = "request_id",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub request_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
@@ -441,6 +451,17 @@ pub struct ThreadResumeParams {
     #[experimental("thread/resume.initialTurnsPage")]
     #[ts(optional = nullable)]
     pub initial_turns_page: Option<ThreadResumeInitialTurnsPageParams>,
+    /// When true, close any unclosed rollout turn left by an unclean crash and
+    /// immediately start a recovery continuation turn.
+    #[serde(
+        default,
+        alias = "resumeInterrupted",
+        alias = "resume_interrupted",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub resume_interrupted: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]

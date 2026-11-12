@@ -76,6 +76,7 @@ pub use agent::api::SpawnRequest;
 pub use agent::types::AgentExecutionGuard;
 pub use agent::types::AgentMessage;
 pub use agent::types::AgentMetadata;
+pub use agent::types::AgentOwnership;
 pub use agent::types::LiveAgent;
 pub use agent::types::MessageDeliveryMode;
 pub use agent::types::ResolvedMultiAgentV2UsageHints;

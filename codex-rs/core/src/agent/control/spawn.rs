@@ -732,6 +732,9 @@ impl LocalAgentControl {
             }
             other => (other, AgentMetadata::default()),
         };
+        agent_metadata.ownership = options.ownership;
+        agent_metadata.parent_thread_id = parent_thread_id;
+        agent_metadata.parent_turn_id = options.parent_turn_id.clone();
         let notification_source = session_source.clone();
 
         // Capture child defaults once. Copying conversation history must not change
@@ -886,10 +889,20 @@ impl LocalAgentControl {
         pending_spawn.wait_for_edge().await?;
         let edge_write = edge_write_started_at.elapsed();
         let child_create_started_at = Instant::now();
+        let child_agent_control =
+            if options.ownership == crate::agent::types::AgentOwnership::Ownerless {
+                LocalAgentControl::new(
+                    Weak::clone(&self.runtime.manager),
+                    Arc::clone(&self.runtime.thread_id_generator),
+                    /*rollout_budget*/ None,
+                )
+            } else {
+                self.clone()
+            };
         let new_thread = state
             .spawn_child_thread(
                 start_options,
-                self.clone(),
+                child_agent_control,
                 parent_thread_id,
                 inherited_exec_policy,
             )
@@ -1161,7 +1174,7 @@ impl LocalAgentControl {
             .runtime
             .registry
             .reserve_spawn_slot(agent_max_threads)?;
-        let (session_source, agent_metadata) = match session_source {
+        let (session_source, mut agent_metadata) = match session_source {
             SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
                 parent_thread_id,
                 depth,
@@ -1179,6 +1192,7 @@ impl LocalAgentControl {
             )?,
             other => (other, AgentMetadata::default()),
         };
+        agent_metadata.parent_thread_id = parent_thread_id;
         let notification_source = session_source.clone();
         let inherited_environments = self
             .inherited_environments_for_source(&state, Some(&session_source))

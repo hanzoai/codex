@@ -8,6 +8,20 @@ use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::turn_input::CyberAccessProgram;
 
+/// Lifecycle ownership of a spawned child agent relative to its parent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOwnership {
+    /// Bound to the spawning turn (`parent_turn_id`): aborting that parent turn interrupts the child.
+    Task,
+    /// Bound to the parent conversation/agent-tree (default): survives individual parent turn aborts,
+    /// shuts down when the agent tree shuts down.
+    #[default]
+    Conversation,
+    /// Detached from both parent turn aborts and parent agent-tree shutdown.
+    Ownerless,
+}
+
 /// Registry identity shared by loaded and unloaded agents.
 /// Registered agents have an `agent_id`; a reserved spawn can still be awaiting its ID.
 #[derive(Clone, Debug, Default)]
@@ -16,6 +30,9 @@ pub struct AgentMetadata {
     pub agent_path: Option<AgentPath>,
     pub agent_nickname: Option<String>,
     pub agent_role: Option<String>,
+    pub ownership: AgentOwnership,
+    pub parent_thread_id: Option<ThreadId>,
+    pub parent_turn_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +66,8 @@ pub struct SpawnAgentOptions {
     pub cyber_access_program: Option<CyberAccessProgram>,
     /// Parent selections apply to the first turn and may need adapting to the child's model.
     pub cyber_access_program_source: SpawnProgramSource,
+    /// Lifecycle ownership tier relative to the spawning turn and parent conversation.
+    pub ownership: AgentOwnership,
 }
 
 /// Identity and status observed from a loaded agent, without a handle to its runtime.

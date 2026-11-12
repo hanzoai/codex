@@ -6198,3 +6198,135 @@ async fn resume_agent_from_rollout_skips_descendants_when_parent_resume_fails() 
         .await
         .expect("tree shutdown after partial subtree resume should succeed");
 }
+
+#[tokio::test]
+async fn agent_ownership_three_tiers_cascade_and_detach_correctly() {
+    assert_eq!(
+        serde_json::from_str::<crate::agent::types::AgentOwnership>("\"task\"")
+            .expect("task ownership"),
+        crate::agent::types::AgentOwnership::Task
+    );
+    assert_eq!(
+        serde_json::from_str::<crate::agent::types::AgentOwnership>("\"conversation\"")
+            .expect("conversation ownership"),
+        crate::agent::types::AgentOwnership::Conversation
+    );
+    assert_eq!(
+        serde_json::from_str::<crate::agent::types::AgentOwnership>("\"ownerless\"")
+            .expect("ownerless ownership"),
+        crate::agent::types::AgentOwnership::Ownerless
+    );
+    assert_eq!(
+        crate::agent::types::AgentOwnership::default(),
+        crate::agent::types::AgentOwnership::Conversation
+    );
+
+    let harness = AgentControlHarness::new().await;
+    let (parent_id, _parent_thread) = harness.start_thread().await;
+
+    let spawn_with_ownership = |role: &str, ownership: crate::agent::types::AgentOwnership| {
+        let control = harness.control.clone();
+        let config = harness.config.clone();
+        let role = role.to_string();
+        async move {
+            control
+                .spawn_agent_with_metadata(
+                    config,
+                    text_input(&format!("hello {role}")),
+                    SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                        parent_thread_id: parent_id,
+                        depth: 1,
+                        agent_path: None,
+                        agent_nickname: None,
+                        agent_role: Some(role),
+                    }),
+                    SpawnAgentOptions {
+                        parent_thread_id: Some(parent_id),
+                        parent_turn_id: Some("turn-parent-1".to_string()),
+                        ownership,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("child spawn should succeed")
+                .thread_id
+        }
+    };
+
+    let task_child_id = spawn_with_ownership("task-worker", crate::agent::types::AgentOwnership::Task).await;
+    let conv_child_id =
+        spawn_with_ownership("conv-worker", crate::agent::types::AgentOwnership::Conversation).await;
+    let ownerless_child_id =
+        spawn_with_ownership("detached-worker", crate::agent::types::AgentOwnership::Ownerless).await;
+
+    assert_eq!(
+        harness
+            .control
+            .runtime
+            .registry
+            .task_owned_child_ids(parent_id, "turn-parent-1"),
+        vec![task_child_id]
+    );
+    assert!(
+        harness
+            .control
+            .runtime
+            .registry
+            .task_owned_child_ids(parent_id, "turn-other")
+            .is_empty()
+    );
+
+    // Ownerless child runs on its own detached LocalAgentRuntime.
+    let ownerless_thread = harness
+        .manager
+        .get_thread(ownerless_child_id)
+        .await
+        .expect("ownerless thread loaded");
+    let conv_thread = harness
+        .manager
+        .get_thread(conv_child_id)
+        .await
+        .expect("conversation thread loaded");
+    assert!(Arc::ptr_eq(
+        &harness.control.runtime.registry,
+        &conv_thread.session.services.local_agent_runtime.registry
+    ));
+    assert!(!Arc::ptr_eq(
+        &harness.control.runtime.registry,
+        &ownerless_thread.session.services.local_agent_runtime.registry
+    ));
+
+    // Parent turn abort interrupts task-owned children without shutting down any child.
+    harness
+        .control
+        .runtime
+        .interrupt_task_owned_children(parent_id, "turn-parent-1")
+        .await;
+    assert!(conv_thread.is_running());
+    assert!(ownerless_thread.is_running());
+
+    // Tree shutdown closes parent + task + conversation children, while ownerless survives!
+    let _ = harness
+        .control
+        .shutdown_agent_tree(parent_id)
+        .await
+        .expect("tree shutdown should succeed");
+    assert_eq!(
+        harness.control.get_status(task_child_id).await,
+        AgentStatus::NotFound
+    );
+    assert_eq!(
+        harness.control.get_status(conv_child_id).await,
+        AgentStatus::NotFound
+    );
+    assert!(
+        ownerless_thread.is_running(),
+        "ownerless child must survive parent shutdown_agent_tree"
+    );
+
+    let report = harness
+        .manager
+        .shutdown_all_threads_bounded(Duration::from_secs(5))
+        .await;
+    assert!(report.timed_out.is_empty());
+}

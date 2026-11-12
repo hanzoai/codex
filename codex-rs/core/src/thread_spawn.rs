@@ -209,6 +209,7 @@ pub(crate) async fn prepare(
                 multi_agent_v2_usage_hints,
                 cyber_access_program: explicit_program_for_spawn(turn),
                 cyber_access_program_source: SpawnProgramSource::ParentTurn,
+                ownership: crate::agent::types::AgentOwnership::default(),
             },
         },
         task_name,
