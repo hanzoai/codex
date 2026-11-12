@@ -173,6 +173,36 @@ pub struct CommandExecutionItem {
     pub aggregated_output: String,
     pub exit_code: Option<i32>,
     pub status: CommandExecutionStatus,
+    /// What the command does, as the agent parses it: the reads, listings and searches
+    /// the TUI groups into one "Explored" block, or unknown. A reader that draws exec's
+    /// stream draws it the TUI's way from this, never from a parse of its own.
+    #[serde(default)]
+    pub command_actions: Vec<CommandAction>,
+}
+
+/// One action a command performs, as the agent parses it: the app server's
+/// `CommandAction`, in exec's stream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type")]
+pub enum CommandAction {
+    Read {
+        command: String,
+        name: String,
+        path: String,
+    },
+    ListFiles {
+        command: String,
+        path: Option<String>,
+    },
+    Search {
+        command: String,
+        query: Option<String>,
+        path: Option<String>,
+    },
+    Unknown {
+        command: String,
+    },
 }
 
 /// A set of file changes by the agent.
@@ -180,6 +210,12 @@ pub struct CommandExecutionItem {
 pub struct FileUpdateChange {
     pub path: String,
     pub kind: PatchChangeKind,
+    /// The lines the change adds and removes, counted as the TUI counts them for its
+    /// "Edited path (+added -removed)" line.
+    #[serde(default)]
+    pub added: usize,
+    #[serde(default)]
+    pub removed: usize,
 }
 
 /// The status of a file change.

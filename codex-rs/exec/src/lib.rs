@@ -132,6 +132,7 @@ pub use exec_events::CollabAgentStatus;
 pub use exec_events::CollabTool;
 pub use exec_events::CollabToolCallItem;
 pub use exec_events::CollabToolCallStatus;
+pub use exec_events::CommandAction as ExecCommandAction;
 pub use exec_events::CommandExecutionItem;
 pub use exec_events::CommandExecutionStatus;
 pub use exec_events::ErrorItem;

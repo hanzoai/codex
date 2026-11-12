@@ -29,6 +29,7 @@ use crate::exec_events::CollabAgentStatus;
 use crate::exec_events::CollabTool;
 use crate::exec_events::CollabToolCallItem;
 use crate::exec_events::CollabToolCallStatus;
+use crate::exec_events::CommandAction;
 use crate::exec_events::CommandExecutionItem;
 use crate::exec_events::CommandExecutionStatus as ExecCommandExecutionStatus;
 use crate::exec_events::ErrorItem;
@@ -166,6 +167,7 @@ impl EventProcessorWithJsonOutput {
                 aggregated_output,
                 exit_code,
                 status,
+                command_actions,
                 ..
             } => Some(ExecThreadItem {
                 id: make_id(),
@@ -173,6 +175,7 @@ impl EventProcessorWithJsonOutput {
                     command,
                     aggregated_output: aggregated_output.unwrap_or_default(),
                     exit_code,
+                    command_actions: command_actions.into_iter().map(command_action).collect(),
                     status: match status {
                         CommandExecutionStatus::InProgress => ExecCommandExecutionStatus::InProgress,
                         CommandExecutionStatus::Completed => ExecCommandExecutionStatus::Completed,
@@ -188,13 +191,18 @@ impl EventProcessorWithJsonOutput {
                 details: ThreadItemDetails::FileChange(FileChangeItem {
                     changes: changes
                         .into_iter()
-                        .map(|change| FileUpdateChange {
-                            path: change.path,
-                            kind: match change.kind {
-                                PatchChangeKind::Add => ExecPatchChangeKind::Add,
-                                PatchChangeKind::Delete => ExecPatchChangeKind::Delete,
-                                PatchChangeKind::Update { .. } => ExecPatchChangeKind::Update,
-                            },
+                        .map(|change| {
+                            let (added, removed) = line_counts(&change.kind, &change.diff);
+                            FileUpdateChange {
+                                path: change.path,
+                                kind: match change.kind {
+                                    PatchChangeKind::Add => ExecPatchChangeKind::Add,
+                                    PatchChangeKind::Delete => ExecPatchChangeKind::Delete,
+                                    PatchChangeKind::Update { .. } => ExecPatchChangeKind::Update,
+                                },
+                                added,
+                                removed,
+                            }
                         })
                         .collect(),
                     status: match status {
@@ -652,3 +660,55 @@ impl EventProcessor for EventProcessorWithJsonOutput {
 #[cfg(test)]
 #[path = "event_processor_with_jsonl_output_tests.rs"]
 mod tests;
+
+/// The lines one change adds and removes, as the TUI counts them (tui diff_render
+/// `line_counts`): an added file's lines, a deleted file's lines, or the inserts and
+/// deletes of an update's unified diff — whose "Moved to" trailer is not diff.
+fn line_counts(kind: &PatchChangeKind, diff: &str) -> (usize, usize) {
+    match kind {
+        PatchChangeKind::Add => (diff.lines().count(), 0),
+        PatchChangeKind::Delete => (0, diff.lines().count()),
+        PatchChangeKind::Update { .. } => {
+            let unified = diff.split("\n\nMoved to: ").next().unwrap_or(diff);
+            diffy::Patch::from_str(unified)
+                .map(|patch| {
+                    patch.hunks().iter().flat_map(diffy::Hunk::lines).fold(
+                        (0, 0),
+                        |(a, d), line| match line {
+                            diffy::Line::Insert(_) => (a + 1, d),
+                            diffy::Line::Delete(_) => (a, d + 1),
+                            diffy::Line::Context(_) => (a, d),
+                        },
+                    )
+                })
+                .unwrap_or((0, 0))
+        }
+    }
+}
+
+/// One parsed action of a command, as exec's stream states it.
+fn command_action(action: codex_app_server_protocol::CommandAction) -> CommandAction {
+    use codex_app_server_protocol::CommandAction as Api;
+    match action {
+        Api::Read {
+            command,
+            name,
+            path,
+        } => CommandAction::Read {
+            command,
+            name,
+            path: path.into_string(),
+        },
+        Api::ListFiles { command, path } => CommandAction::ListFiles { command, path },
+        Api::Search {
+            command,
+            query,
+            path,
+        } => CommandAction::Search {
+            command,
+            query,
+            path,
+        },
+        Api::Unknown { command } => CommandAction::Unknown { command },
+    }
+}

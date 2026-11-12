@@ -52,6 +52,7 @@ use codex_exec::CommandExecutionItem;
 use codex_exec::CommandExecutionStatus;
 use codex_exec::ErrorItem;
 use codex_exec::EventProcessorWithJsonOutput;
+use codex_exec::ExecCommandAction;
 use codex_exec::ExecThreadItem;
 use codex_exec::FileChangeItem;
 use codex_exec::FileUpdateChange as ExecFileUpdateChange;
@@ -204,6 +205,7 @@ fn command_execution_started_and_completed_translate_to_thread_events() {
                         command: "ls".to_string(),
                         aggregated_output: String::new(),
                         exit_code: None,
+                        command_actions: Vec::new(),
                         status: CommandExecutionStatus::InProgress,
                     }),
                 },
@@ -246,6 +248,7 @@ fn command_execution_started_and_completed_translate_to_thread_events() {
                         command: "ls".to_string(),
                         aggregated_output: "a.txt\n".to_string(),
                         exit_code: Some(0),
+                        command_actions: Vec::new(),
                         status: CommandExecutionStatus::Completed,
                     }),
                 },
@@ -945,14 +948,20 @@ fn file_change_completion_maps_change_kinds() {
                             ExecFileUpdateChange {
                                 path: "a/added.txt".to_string(),
                                 kind: PatchChangeKind::Add,
+                                added: 0,
+                                removed: 0,
                             },
                             ExecFileUpdateChange {
                                 path: "b/deleted.txt".to_string(),
                                 kind: PatchChangeKind::Delete,
+                                added: 0,
+                                removed: 0,
                             },
                             ExecFileUpdateChange {
                                 path: "c/modified.txt".to_string(),
                                 kind: PatchChangeKind::Update,
+                                added: 0,
+                                removed: 0,
                             },
                         ],
                         status: PatchApplyStatus::Completed,
@@ -996,6 +1005,8 @@ fn file_change_declined_maps_to_failed_status() {
                         changes: vec![ExecFileUpdateChange {
                             path: "file.txt".to_string(),
                             kind: PatchChangeKind::Update,
+                            added: 0,
+                            removed: 0,
                         }],
                         status: PatchApplyStatus::Failed,
                     }),
@@ -1477,6 +1488,7 @@ fn turn_completion_reconciles_started_items_from_turn_items() {
                         command: "ls".to_string(),
                         aggregated_output: String::new(),
                         exit_code: None,
+                        command_actions: Vec::new(),
                         status: CommandExecutionStatus::InProgress,
                     }),
                 },
@@ -1528,6 +1540,7 @@ fn turn_completion_reconciles_started_items_from_turn_items() {
                             command: "ls".to_string(),
                             aggregated_output: "a.txt\n".to_string(),
                             exit_code: Some(0),
+                            command_actions: Vec::new(),
                             status: CommandExecutionStatus::Completed,
                         }),
                     },
@@ -1815,5 +1828,122 @@ fn model_reroute_surfaces_as_error_item() {
         ThreadItemDetails::Error(ErrorItem {
             message: "model rerouted: gpt-5 -> gpt-5-mini (HighRiskCyberActivity)".to_string(),
         })
+    );
+}
+
+/// exec's stream says what the TUI draws from: each command's parsed actions (the
+/// reads, listings and searches it groups into "Explored") and each change's added
+/// and removed lines (its "Edited path (+a -r)"), so a reader of the stream draws
+/// the TUI's transcript from the agent's own parse rather than one of its own.
+#[test]
+fn exec_json_carries_what_the_tui_draws_from() {
+    let mut processor = EventProcessorWithJsonOutput::new(/*last_message_path*/ None);
+    let read = CommandAction::Read {
+        command: "sed -n '1,40p' src/lib.rs".to_string(),
+        name: "lib.rs".to_string(),
+        path: test_path_buf("/tmp/project/src/lib.rs").abs().into(),
+    };
+    let search = CommandAction::Search {
+        command: "rg -n widget src".to_string(),
+        query: Some("widget".to_string()),
+        path: Some("src".to_string()),
+    };
+    let collected = processor.collect_thread_events(ServerNotification::ItemCompleted(
+        ItemCompletedNotification::new(
+            "thread-1".to_string(),
+            "turn-1".to_string(),
+            ThreadItemPayload::CommandExecution {
+                model_context: None,
+                sandbox_type: None,
+                id: "cmd-2".to_string(),
+                command: "sed -n '1,40p' src/lib.rs && rg -n widget src".to_string(),
+                cwd: test_path_buf("/tmp/project").abs().into(),
+                process_id: None,
+                plugin_id: None,
+                script_path: None,
+                source: CommandExecutionSource::Agent,
+                status: ApiCommandExecutionStatus::Completed,
+                command_actions: vec![read, search],
+                aggregated_output: Some("pub fn widget() {}\n".to_string()),
+                exit_code: Some(0),
+                duration_ms: Some(3),
+            },
+            /*started_at_ms*/ None,
+            /*completed_at_ms*/ 0,
+        ),
+    ));
+    let [ThreadEvent::ItemCompleted(ItemCompletedEvent { item })] = collected.events.as_slice()
+    else {
+        panic!("expected one completed item, got {:?}", collected.events);
+    };
+    let ThreadItemDetails::CommandExecution(command) = &item.details else {
+        panic!("expected a command, got {:?}", item.details);
+    };
+    assert_eq!(
+        command.command_actions,
+        vec![
+            ExecCommandAction::Read {
+                command: "sed -n '1,40p' src/lib.rs".to_string(),
+                name: "lib.rs".to_string(),
+                path: test_path_buf("/tmp/project/src/lib.rs")
+                    .display()
+                    .to_string(),
+            },
+            ExecCommandAction::Search {
+                command: "rg -n widget src".to_string(),
+                query: Some("widget".to_string()),
+                path: Some("src".to_string()),
+            },
+        ]
+    );
+    let json = serde_json::to_value(command).expect("a command serializes");
+    assert_eq!(json["command_actions"][0]["type"], "read");
+    assert_eq!(json["command_actions"][1]["type"], "search");
+
+    let collected = processor.collect_thread_events(ServerNotification::ItemCompleted(
+        ItemCompletedNotification::new(
+            "thread-1".to_string(),
+            "turn-1".to_string(),
+            ThreadItemPayload::FileChange {
+                id: "patch-3".to_string(),
+                changes: vec![
+                    ApiFileUpdateChange {
+                        path: "new.rs".to_string(),
+                        kind: ApiPatchChangeKind::Add,
+                        diff: "fn a() {}\nfn b() {}\n".to_string(),
+                    },
+                    ApiFileUpdateChange {
+                        path: "gone.rs".to_string(),
+                        kind: ApiPatchChangeKind::Delete,
+                        diff: "fn c() {}\n".to_string(),
+                    },
+                    ApiFileUpdateChange {
+                        path: "lib.rs".to_string(),
+                        kind: ApiPatchChangeKind::Update { move_path: None },
+                        diff: "--- a/lib.rs\n+++ b/lib.rs\n@@ -1,2 +1,3 @@\n fn x() {}\n-fn y() {}\n+fn y2() {}\n+fn z() {}\n"
+                            .to_string(),
+                    },
+                ],
+                status: ApiPatchApplyStatus::Completed,
+            },
+            /*started_at_ms*/ None,
+            /*completed_at_ms*/ 0,
+        ),
+    ));
+    let [ThreadEvent::ItemCompleted(ItemCompletedEvent { item })] = collected.events.as_slice()
+    else {
+        panic!("expected one completed item, got {:?}", collected.events);
+    };
+    let ThreadItemDetails::FileChange(change) = &item.details else {
+        panic!("expected a file change, got {:?}", item.details);
+    };
+    let counts: Vec<(&str, usize, usize)> = change
+        .changes
+        .iter()
+        .map(|c| (c.path.as_str(), c.added, c.removed))
+        .collect();
+    assert_eq!(
+        counts,
+        vec![("new.rs", 2, 0), ("gone.rs", 0, 1), ("lib.rs", 2, 1)]
     );
 }

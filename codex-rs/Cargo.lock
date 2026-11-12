@@ -3311,6 +3311,7 @@ dependencies = [
  "codex-utils-sandbox-summary",
  "codex-worktree",
  "core_test_support",
+ "diffy",
  "hanzo",
  "insta",
  "libc",

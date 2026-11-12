@@ -46,6 +46,7 @@ codex-utils-oss = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 codex-utils-sandbox-summary = { workspace = true }
 codex-worktree = { workspace = true }
+diffy = { workspace = true }
 owo-colors = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
