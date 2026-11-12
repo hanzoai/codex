@@ -17,8 +17,11 @@ export type CommandExecutionItem = {
   exit_code?: number;
   /** Current status of the command execution. */
   status: CommandExecutionStatus;
-  /** What the command does, as the agent parses it: what the TUI groups into "Explored". */
-  command_actions: CommandAction[];
+  /**
+   * What the command does, as the agent parses it: what the TUI groups into
+   * "Explored". Absent from a binary older than this field.
+   */
+  command_actions?: CommandAction[];
 };
 
 /** One action a command performs, as the agent parses it. */
@@ -35,10 +38,13 @@ export type PatchChangeKind = "add" | "delete" | "update";
 export type FileUpdateChange = {
   path: string;
   kind: PatchChangeKind;
-  /** Lines the change adds, as the TUI counts them for "Edited path (+added -removed)". */
-  added: number;
-  /** Lines the change removes. */
-  removed: number;
+  /**
+   * Lines the change adds, as the TUI counts them for "Edited path (+added -removed)".
+   * Absent from a binary older than this field.
+   */
+  added?: number;
+  /** Lines the change removes. Absent from a binary older than this field. */
+  removed?: number;
 };
 
 /** The status of a file change. */
