@@ -361,6 +361,13 @@ pub(crate) fn resolve_provider_auth(
         ));
     }
 
+    if auth.is_none() && provider.auth.is_some() && hanzo::is_hanzo(provider.base_url.as_deref()) {
+        return Err(CodexErr::InvalidRequest(
+            "Not signed in to Hanzo or session expired. Run `dev login` to sign in, or pipe a key to `dev login --with-api-key`."
+                .to_string(),
+        ));
+    }
+
     Ok(match auth {
         Some(auth) => auth_provider_from_auth(auth),
         None => unauthenticated_auth_provider(),

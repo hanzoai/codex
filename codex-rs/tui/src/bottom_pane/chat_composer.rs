@@ -798,6 +798,7 @@ impl ChatComposer {
                 measured_status_line: Default::default(),
                 wrapped_native_status: Default::default(),
                 status_line_enabled: false,
+                right_status_line: None,
                 side_conversation_context_label: None,
                 active_agent_label: None,
                 external_editor_key: default_keymap
@@ -4879,7 +4880,7 @@ impl ChatComposer {
             let prompt = if self.draft.input_enabled && self.draft.is_bash_mode {
                 Span::from("!").light_red().bold()
             } else {
-                "›".bold().dim()
+                Span::from(crate::ui_consts::PROMPT_MARK).white().bold()
             };
             buf.set_span(
                 textarea_rect.x - LIVE_PREFIX_COLS,

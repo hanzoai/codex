@@ -189,6 +189,29 @@ pub fn find(slug: &str) -> Option<&'static Model> {
     MODELS.iter().find(|model| model.slug == slug)
 }
 
+/// Short display label for the bottom-right status indicator (e.g. `Enso` for `enso-auto`).
+pub fn compact_name<'a>(slug: &str, display_name: &'a str) -> &'a str {
+    let trimmed_slug = slug.trim();
+    if trimmed_slug.eq_ignore_ascii_case("enso-auto")
+        || trimmed_slug.eq_ignore_ascii_case("enso")
+        || display_name.trim().eq_ignore_ascii_case("Enso Auto")
+    {
+        return "Enso";
+    }
+    if let Some(stripped) = display_name.trim().strip_suffix(" Auto") {
+        if !stripped.is_empty() {
+            return stripped;
+        }
+    }
+    if let Some(model) = find(trimmed_slug) {
+        if let Some(stripped) = model.name.strip_suffix(" Auto") {
+            return stripped;
+        }
+        return model.name;
+    }
+    display_name.trim()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

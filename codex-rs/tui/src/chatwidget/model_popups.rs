@@ -282,18 +282,42 @@ impl ChatWidget {
             .map(|preset| {
                 let is_current = self.is_current_picker_preset(&preset);
                 let qualified_model = self.qualified_picker_model(&preset);
+                let lower_model = qualified_model.to_ascii_lowercase();
+                let is_flash =
+                    lower_model.ends_with("-flash") || lower_model.contains("-flash-");
                 let target_effort = if is_current {
-                    active_effort
-                        .clone()
-                        .unwrap_or(preset.default_reasoning_effort.clone())
+                    active_effort.clone().unwrap_or_else(|| {
+                        if is_flash {
+                            ReasoningEffortConfig::Custom("instant".to_string())
+                        } else {
+                            ReasoningEffortConfig::Custom(hanzo::effort::DEFAULT.to_string())
+                        }
+                    })
+                } else if is_flash {
+                    ReasoningEffortConfig::Custom("instant".to_string())
                 } else {
-                    preset.default_reasoning_effort.clone()
+                    ReasoningEffortConfig::Custom(hanzo::effort::DEFAULT.to_string())
                 };
-                let initial_effort_idx = match target_effort {
-                    ReasoningEffortConfig::Low | ReasoningEffortConfig::Minimal => 0,
-                    ReasoningEffortConfig::Medium => 1,
-                    _ => 2,
+                let initial_effort_idx = match target_effort.as_str() {
+                    "instant" | "none" | "minimal" => 0,
+                    "low" => 1,
+                    "medium" => 2,
+                    "high" => 3,
+                    _ => 4,
                 };
+                let instant_effort =
+                    Some(ReasoningEffortConfig::Custom("instant".to_string()));
+                let auto_effort = Some(ReasoningEffortConfig::Custom(
+                    hanzo::effort::DEFAULT.to_string(),
+                ));
+                let actions_instant = self.model_selection_actions(
+                    qualified_model.clone(),
+                    instant_effort.clone(),
+                    self.should_prompt_plan_mode_reasoning_scope(
+                        qualified_model.as_str(),
+                        instant_effort,
+                    ),
+                );
                 let actions_low = self.model_selection_actions(
                     qualified_model.clone(),
                     Some(ReasoningEffortConfig::Low),
@@ -318,16 +342,26 @@ impl ChatWidget {
                         Some(ReasoningEffortConfig::High),
                     ),
                 );
+                let actions_auto = self.model_selection_actions(
+                    qualified_model.clone(),
+                    auto_effort.clone(),
+                    self.should_prompt_plan_mode_reasoning_scope(
+                        qualified_model.as_str(),
+                        auto_effort,
+                    ),
+                );
 
                 let on_select: std::sync::Arc<
                     dyn Fn(&crate::app_event_sender::AppEventSender, ReasoningEffortConfig)
                         + Send
                         + Sync,
                 > = std::sync::Arc::new(move |tx, effort| {
-                    let actions = match effort {
-                        ReasoningEffortConfig::Low | ReasoningEffortConfig::Minimal => &actions_low,
-                        ReasoningEffortConfig::Medium => &actions_medium,
-                        _ => &actions_high,
+                    let actions = match effort.as_str() {
+                        "instant" | "none" | "minimal" => &actions_instant,
+                        "low" => &actions_low,
+                        "medium" => &actions_medium,
+                        "high" => &actions_high,
+                        _ => &actions_auto,
                     };
                     for action in actions {
                         action(tx);

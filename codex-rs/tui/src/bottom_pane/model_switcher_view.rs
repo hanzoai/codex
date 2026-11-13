@@ -109,20 +109,29 @@ impl ModelSwitcherView {
     pub(crate) fn default_effort_options() -> Vec<ModelSwitcherEffortOption> {
         vec![
             ModelSwitcherEffortOption {
+                effort: ReasoningEffortConfig::Custom("instant".to_string()),
+                label: "instant".to_string(),
+                description: "No reasoning – lowest latency, fastest answers".to_string(),
+            },
+            ModelSwitcherEffortOption {
                 effort: ReasoningEffortConfig::Low,
                 label: "low".to_string(),
-                description: "Fast responses with lighter reasoning".to_string(),
+                description: "Light reasoning for quick, simple work".to_string(),
             },
             ModelSwitcherEffortOption {
                 effort: ReasoningEffortConfig::Medium,
                 label: "medium".to_string(),
-                description: "Balances speed and reasoning depth for everyday tasks".to_string(),
+                description: "Balanced reasoning for everyday tasks".to_string(),
             },
             ModelSwitcherEffortOption {
                 effort: ReasoningEffortConfig::High,
                 label: "high".to_string(),
-                description: "Deepest reasoning for complex problems – slower but strongest"
-                    .to_string(),
+                description: "Deep reasoning for complex problems".to_string(),
+            },
+            ModelSwitcherEffortOption {
+                effort: ReasoningEffortConfig::Custom(hanzo::effort::DEFAULT.to_string()),
+                label: "auto".to_string(),
+                description: "Full effort automatically when needed (default)".to_string(),
             },
         ]
     }
@@ -314,25 +323,31 @@ impl ModelSwitcherView {
 
         // 4. Effort slider
         let default_efforts = Self::default_effort_options();
+        let default_idx = default_efforts.len().saturating_sub(1);
         let (efforts, effort_idx) = if let Some(item_idx) = self.current_item_index() {
             let item = &self.items[item_idx];
             let idx = self
                 .selected_effort_by_item
                 .get(item_idx)
                 .copied()
-                .unwrap_or(0);
+                .unwrap_or(default_idx);
             if item.efforts.is_empty() {
-                (default_efforts.as_slice(), 2usize)
+                (default_efforts.as_slice(), default_idx)
             } else {
                 (item.efforts.as_slice(), idx.min(item.efforts.len() - 1))
             }
         } else {
-            (default_efforts.as_slice(), 2usize)
+            (default_efforts.as_slice(), default_idx)
         };
 
         let num_efforts = efforts.len().max(1);
         let can_go_left = effort_idx > 0;
         let can_go_right = effort_idx + 1 < num_efforts;
+        let seg_width = if num_efforts >= 5 { 9usize } else { 15usize };
+        let seg_bar = "─".repeat(seg_width);
+        let side_pad = if num_efforts >= 5 { "    " } else { "        " };
+        let first_node_col = 12 + side_pad.len();
+        let step_cols = seg_width + 1;
 
         let mut track_spans = vec![
             Span::from("  Effort").dim(),
@@ -342,30 +357,31 @@ impl ModelSwitcherView {
             } else {
                 Span::from("◀").dim()
             },
-            Span::from("        "),
+            Span::from(side_pad),
         ];
 
-        for idx in 0..num_efforts {
+        for (idx, opt) in efforts.iter().enumerate() {
             if idx > 0 {
                 let seg_active = idx <= effort_idx;
                 let seg_span = if seg_active {
-                    Span::styled("───────────────", Style::default().fg(track_coral))
+                    Span::styled(seg_bar.clone(), Style::default().fg(track_coral))
                 } else {
-                    Span::from("───────────────").dim()
+                    Span::from(seg_bar.clone()).dim()
                 };
                 track_spans.push(seg_span);
             }
+            let glyph = hanzo::effort::symbol(Some(opt.label.as_str()));
             let node_span = if idx == effort_idx {
-                Span::styled("◉", Style::default().fg(active_coral).bold())
+                Span::styled(glyph, Style::default().fg(active_coral).bold())
             } else if idx < effort_idx {
-                Span::styled("●", Style::default().fg(track_coral))
+                Span::styled(glyph, Style::default().fg(track_coral))
             } else {
-                Span::from("●").dim()
+                Span::from(glyph).dim()
             };
             track_spans.push(node_span);
         }
 
-        track_spans.push(Span::from("        "));
+        track_spans.push(Span::from(side_pad));
         track_spans.push(if can_go_right {
             Span::styled("▶", Style::default().fg(accent_blue))
         } else {
@@ -373,11 +389,11 @@ impl ModelSwitcherView {
         });
         lines.push(Line::from(track_spans));
 
-        // Effort labels line aligned under nodes (node 0 at col 20, node 1 at col 36, node 2 at col 52)
+        // Effort labels line aligned under nodes
         let mut label_spans: Vec<Span<'static>> = Vec::new();
         let mut cursor_col: usize = 0;
         for (idx, opt) in efforts.iter().enumerate() {
-            let node_col = 20 + idx * 16;
+            let node_col = first_node_col + idx * step_cols;
             let label_len = opt.label.chars().count();
             let target_start = node_col.saturating_sub(label_len / 2);
             let pad = target_start.saturating_sub(cursor_col);
@@ -399,7 +415,7 @@ impl ModelSwitcherView {
         let desc = efforts
             .get(effort_idx)
             .map(|opt| opt.description.as_str())
-            .unwrap_or("Deepest reasoning for complex problems – slower but strongest");
+            .unwrap_or("Full effort automatically when needed (default)");
         lines.push(Line::from(vec![
             Span::from("            "),
             Span::from(desc.to_string()).dim().italic(),

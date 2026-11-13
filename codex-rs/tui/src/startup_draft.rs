@@ -263,13 +263,30 @@ impl StartupDraftPump {
             local_settings.tui.animations && local_settings.tui.effects.welcome,
         );
         self.header = startup_session_header(Some(cwd));
-        self.bottom_pane.set_status_line_enabled(
-            local_settings
-                .tui
-                .status_line
-                .as_ref()
-                .is_none_or(|items| !items.is_empty()),
-        );
+        let status_enabled = local_settings
+            .tui
+            .status_line
+            .as_ref()
+            .is_none_or(|items| !items.is_empty());
+        self.bottom_pane.set_status_line_enabled(status_enabled);
+        if status_enabled {
+            let formatted_cwd = crate::exec_command::relativize_to_home(cwd)
+                .map(|rel| {
+                    if rel.as_os_str().is_empty() {
+                        "~".to_string()
+                    } else {
+                        format!("~{}{}", std::path::MAIN_SEPARATOR, rel.display())
+                    }
+                })
+                .unwrap_or_else(|| cwd.display().to_string());
+            self.bottom_pane.set_status_line(Some(
+                ratatui::text::Line::from(ratatui::text::Span::styled(
+                    formatted_cwd,
+                    crate::style::secondary_text_style(),
+                ))
+                .into(),
+            ));
+        }
         self.bottom_pane
             .set_disable_paste_burst(local_settings.tui.disable_paste_burst.unwrap_or(false));
         self.bottom_pane.request_redraw();
@@ -545,6 +562,12 @@ fn startup_draft_bottom_pane(
         },
     );
     bottom_pane.set_context_window_pending(/*pending*/ true);
+    bottom_pane.set_right_status_line(Some(ratatui::text::Line::from(vec![
+        ratatui::text::Span::styled("Enso ", crate::style::secondary_text_style()),
+        ratatui::text::Span::from(hanzo::effort::symbol(None))
+            .white()
+            .bold(),
+    ])));
     bottom_pane
 }
 

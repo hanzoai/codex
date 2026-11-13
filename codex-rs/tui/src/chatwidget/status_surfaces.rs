@@ -206,6 +206,7 @@ impl ChatWidget {
         self.bottom_pane.set_status_line_enabled(enabled);
         if !enabled {
             self.set_status_line(/*status_line*/ None);
+            self.bottom_pane.set_right_status_line(None);
             return;
         }
 
@@ -223,6 +224,23 @@ impl ChatWidget {
             self.status_line_pull_request_url(),
         );
         self.set_status_line(line.map(Into::into));
+
+        let compact_model =
+            hanzo::catalog::compact_name(self.current_model(), self.model_display_name());
+        let effort_symbol = hanzo::effort::symbol_for(
+            self.current_model(),
+            self.effective_reasoning_effort()
+                .as_ref()
+                .map(ReasoningEffortConfig::as_str),
+        );
+        let right_line = Line::from(vec![
+            ratatui::text::Span::styled(
+                format!("{compact_model} "),
+                crate::style::secondary_text_style(),
+            ),
+            ratatui::text::Span::from(effort_symbol).white().bold(),
+        ]);
+        self.bottom_pane.set_right_status_line(Some(right_line));
     }
 
     /// Clears the terminal title Codex most recently wrote, if any.

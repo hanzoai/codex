@@ -2,7 +2,10 @@ use super::manager::CodexAuth;
 use super::manager::ExternalAuth;
 use super::manager::ExternalAuthFuture;
 use super::manager::ExternalAuthRefreshContext;
+use super::manager::RefreshTokenError;
 use codex_protocol::config_types::ModelProviderAuthInfo;
+use codex_protocol::error::RefreshTokenFailedError;
+use codex_protocol::error::RefreshTokenFailedReason;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
@@ -78,6 +81,22 @@ impl ExternalAuth for BearerTokenRefresher {
 
     fn refresh(&self, context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, CodexAuth> {
         Box::pin(BearerTokenRefresher::refresh(self, context))
+    }
+
+    fn classify_error(&self, error: std::io::Error) -> RefreshTokenError {
+        let message = error.to_string();
+        if message.contains("Not signed in")
+            || message.contains("Run `dev login`")
+            || message.contains("Run 'dev login'")
+            || message.contains("session expired")
+        {
+            return RefreshTokenError::Permanent(RefreshTokenFailedError::new(
+                RefreshTokenFailedReason::Expired,
+                "Not signed in to Hanzo or session expired. Run `dev login` to sign in, or pipe a key to `dev login --with-api-key`."
+                    .to_string(),
+            ));
+        }
+        RefreshTokenError::Transient(error)
     }
 }
 

@@ -389,6 +389,7 @@ pub(super) struct FooterState {
     pub(super) wrapped_native_status:
         std::cell::RefCell<Option<super::native_status::WrappedNativeStatus>>,
     pub(super) status_line_enabled: bool,
+    pub(super) right_status_line: Option<Line<'static>>,
     pub(super) side_conversation_context_label: Option<String>,
     pub(super) active_agent_label: Option<String>,
     pub(super) external_editor_key: Option<ShortcutHint>,

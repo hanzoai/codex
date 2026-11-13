@@ -1555,6 +1555,45 @@ async fn external_bearer_only_auth_manager_returns_none_when_command_fails() {
 }
 
 #[tokio::test]
+async fn external_bearer_not_signed_in_fails_unauthorized_recovery_permanently() {
+    let tempdir = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let (command, args) = (
+        "/bin/sh".to_string(),
+        vec![
+            "-c".into(),
+            "echo \"Error: Not signed in to Hanzo. Run 'dev login'.\" >&2; exit 1".into(),
+        ],
+    );
+    #[cfg(windows)]
+    let (command, args) = (
+        "cmd.exe".to_string(),
+        vec![
+            "/C".into(),
+            "echo Error: Not signed in to Hanzo. Run 'dev login'. 1>&2 & exit /b 1".into(),
+        ],
+    );
+    let config = ModelProviderAuthInfo {
+        command,
+        args,
+        timeout_ms: std::num::NonZeroU64::new(5_000).unwrap(),
+        refresh_interval_ms: 0,
+        cwd: tempdir.path().try_into().unwrap(),
+    };
+    let manager = AuthManager::external_bearer_only(config);
+    let mut recovery = manager.unauthorized_recovery();
+
+    let err = recovery
+        .next()
+        .await
+        .expect_err("not signed in should fail permanently");
+    assert!(
+        matches!(err, RefreshTokenError::Permanent(_)),
+        "expected permanent refresh failure, got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn unauthorized_recovery_retries_provider_command_after_initial_failure() {
     let script = ProviderAuthScript::new(&["provider-token"]).unwrap();
     std::fs::write(script.tempdir.path().join("fail-once"), "").unwrap();

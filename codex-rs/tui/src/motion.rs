@@ -78,7 +78,7 @@ pub(crate) fn activity_indicator(
         MotionMode::Animated => Some(animated_activity_indicator(start_time)),
         MotionMode::Reduced => match reduced_motion_indicator {
             ReducedMotionIndicator::Hidden => None,
-            ReducedMotionIndicator::StaticBullet => Some("●".dim()),
+            ReducedMotionIndicator::StaticBullet => Some("●".white().bold()),
         },
     }
 }
@@ -202,7 +202,7 @@ mod tests {
                 MotionMode::Reduced,
                 ReducedMotionIndicator::StaticBullet,
             ),
-            Some("•".dim())
+            Some("●".white().bold())
         );
     }
 

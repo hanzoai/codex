@@ -671,3 +671,27 @@ async fn chatgpt_sessions_share_bootstrap_failure_cooldown() {
     assert!(second_fallback.is_engaged());
     assert_eq!(registration_count.load(Ordering::SeqCst), 3);
 }
+
+#[test]
+fn hanzo_command_auth_without_credential_fails_fast_instead_of_unauthenticated_retry() {
+    let mut provider =
+        create_oss_provider_with_base_url("https://api.hanzo.ai/v1", WireApi::Responses);
+    provider.auth = Some(ModelProviderAuthInfo {
+        command: "dev".to_string(),
+        args: vec!["token".into()],
+        timeout_ms: NonZeroU64::new(5_000).expect("timeout should be non-zero"),
+        refresh_interval_ms: 600_000,
+        cwd: std::env::current_dir()
+            .expect("current directory should be available")
+            .try_into()
+            .expect("current directory should be absolute"),
+    });
+
+    let err = match resolve_provider_auth(/*auth*/ None, &provider) {
+        Ok(_) => panic!("missing Hanzo command auth must fail fast"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("Run `dev login`"), "{err}");
+    assert_eq!(err.retry_delay(/*retry_count*/ 1), None);
+}
+

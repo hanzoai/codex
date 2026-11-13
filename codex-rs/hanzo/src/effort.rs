@@ -49,6 +49,45 @@ pub fn shown(name: &str) -> &str {
         .map_or(name, |(_, ours)| ours)
 }
 
+/// 5-step Unicode circle effort scale:
+/// - `○` (U+25CB, White Circle) — 0% / Empty / Instant / Flash
+/// - `◔` (U+25D4, Circle with Upper Right Quadrant Black) — 25% / Low effort
+/// - `◑` (U+25D1, Circle with Right Half Black) — 50% / Medium effort
+/// - `◕` (U+25D5, Circle with All But Upper Left Quadrant Black) — 75% / High effort
+/// - `●` (U+25CF, Black Circle) — 100% / Full / Auto effort (default)
+pub fn symbol(effort: Option<&str>) -> &'static str {
+    match effort.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("instant" | "none" | "minimal") => "○",
+        Some("low") => "◔",
+        Some("medium") => "◑",
+        Some("high") => "◕",
+        Some("auto" | "max" | "xhigh" | "ultra" | "default") | None => "●",
+        Some(_) => "●",
+    }
+}
+
+/// Returns the effort symbol for `model` and `effort`, defaulting `-flash` models
+/// to `○` (instant/fastest) when effort is unset or `auto`.
+pub fn symbol_for(model: &str, effort: Option<&str>) -> &'static str {
+    let lower_model = model.trim().to_ascii_lowercase();
+    let is_flash = lower_model.ends_with("-flash") || lower_model.contains("-flash-");
+    match effort.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("instant" | "none" | "minimal") => "○",
+        Some("low") => "◔",
+        Some("medium") => "◑",
+        Some("high") => "◕",
+        Some("max" | "xhigh" | "ultra") => "●",
+        Some("auto" | "default") | None => {
+            if is_flash {
+                "○"
+            } else {
+                "●"
+            }
+        }
+        Some(_) => "●",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

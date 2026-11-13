@@ -28,6 +28,14 @@ impl ChatComposer {
         true
     }
 
+    pub(crate) fn set_right_status_line(&mut self, line: Option<Line<'static>>) -> bool {
+        if self.footer.right_status_line == line {
+            return false;
+        }
+        self.footer.right_status_line = line;
+        true
+    }
+
     pub(crate) fn set_side_conversation_context_label(&mut self, label: Option<String>) -> bool {
         if self.footer.side_conversation_context_label == label {
             return false;
@@ -55,7 +63,7 @@ impl ChatComposer {
         if bounds.width == 0 || bounds.height == 0 {
             return 0;
         }
-        match status.as_deref() {
+        let left_height = match status.as_deref() {
             Some(FooterContent::Extension { content }) => {
                 let cache = &self.footer.measured_status_line;
                 if let Some((previous, height)) = cache.get()
@@ -75,6 +83,19 @@ impl ChatComposer {
                 ),
             Some(line) => u16::from(line.width() > 0),
             None => 0,
+        };
+        if left_height == 0
+            && !options.unfocused
+            && self.footer.status_line_enabled
+            && self
+                .footer
+                .right_status_line
+                .as_ref()
+                .is_some_and(|line| line.width() > 0)
+        {
+            1
+        } else {
+            left_height
         }
     }
 
@@ -149,6 +170,21 @@ impl ChatComposer {
                 wrapped.render(area, buf);
             } else {
                 line.into_owned().render(area, buf);
+            }
+        }
+        if self.footer.status_line_enabled
+            && area.height > 0
+            && let Some(right_line) = &self.footer.right_status_line
+        {
+            let right_width = u16::try_from(right_line.width()).unwrap_or(u16::MAX);
+            if right_width > 0 && right_width <= area.width {
+                let right_rect = Rect::new(
+                    area.right().saturating_sub(right_width),
+                    area.y,
+                    right_width,
+                    1,
+                );
+                right_line.clone().render(right_rect, buf);
             }
         }
     }

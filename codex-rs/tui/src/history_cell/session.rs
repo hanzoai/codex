@@ -383,7 +383,6 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let mut lines = vec![
             Line::default(),
             Line::from(codex_title(self.version)),
-            Line::from(vec![self.format_directory(Some(width)).dim()]),
         ];
         if self.yolo_mode {
             lines.push(Line::from(vec![

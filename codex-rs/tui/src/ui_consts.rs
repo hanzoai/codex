@@ -11,7 +11,7 @@ pub(crate) const LIVE_PREFIX_COLS: u16 = 2;
 /// The footer starts in the first column, with the transcript's bullets and the prompt mark.
 pub(crate) const FOOTER_INDENT_COLS: usize = 0;
 /// The composer's prompt mark: the arrow in front of what you are typing.
-pub(crate) const PROMPT_MARK: &str = "▶";
+pub(crate) const PROMPT_MARK: &str = "⏵";
 /// Columns kept clear at the footer's right edge.
 pub(crate) const FOOTER_RIGHT_PADDING_COLS: u16 = LIVE_PREFIX_COLS;
 pub(crate) fn transcript_hint() -> String {
