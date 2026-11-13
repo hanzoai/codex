@@ -68,6 +68,7 @@ impl App {
                     | AppEvent::TerminalTitleSetupPreview { .. }
                     | AppEvent::TerminalTitleSetupCancelled
                     | AppEvent::OpenConfigEditor(_)
+                    | AppEvent::OpenSettingsSection(_)
                     | AppEvent::Provider(_)
                     | AppEvent::SyntaxThemeSelected { .. }
                     | AppEvent::SyntaxThemePreviewed
@@ -3841,6 +3842,10 @@ impl App {
                         .open_config_editor(handoff, resume_current_availability);
                     self.chat_widget.refresh_config_panel(/*notice*/ None);
                 }
+            }
+            AppEvent::OpenSettingsSection(section) => {
+                self.cancel_pending_key_chord();
+                self.chat_widget.open_settings_panel(Some(&section));
             }
             AppEvent::TestConfigNotification => self.schedule_config_notification_test(),
             AppEvent::SendConfigTestNotification { generation } => {

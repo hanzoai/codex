@@ -618,6 +618,9 @@ impl ChatWidget {
             SlashCommand::Statusline => {
                 self.open_status_line_setup();
             }
+            SlashCommand::Settings => {
+                self.open_settings_panel(None);
+            }
             SlashCommand::Config => {
                 self.open_config_panel();
             }
@@ -844,6 +847,9 @@ impl ChatWidget {
             SlashCommand::Model if !trimmed.is_empty() => {
                 self.handle_model_command_args(trimmed);
                 self.app_event_tx.send(AppEvent::SettingsSelectionClosed);
+            }
+            SlashCommand::Settings | SlashCommand::Config => {
+                self.open_settings_panel(Some(trimmed));
             }
             SlashCommand::Title => {
                 self.handle_terminal_title_command_args(trimmed);
@@ -1400,6 +1406,7 @@ impl ChatWidget {
             | SlashCommand::Hooks
             | SlashCommand::Title
             | SlashCommand::Statusline
+            | SlashCommand::Settings
             | SlashCommand::Config
             | SlashCommand::Theme
             | SlashCommand::Tui

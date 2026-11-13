@@ -1856,6 +1856,9 @@ pub(crate) enum AppEvent {
     /// Open an existing editor above the configuration panel.
     OpenConfigEditor(crate::config_panel::ConfigEditorHandoff),
 
+    /// Open a section from the `/settings` overview panel.
+    OpenSettingsSection(String),
+
     /// Schedule a notification preview with time to switch away from the terminal.
     TestConfigNotification,
 

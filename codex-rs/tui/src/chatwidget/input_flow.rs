@@ -31,6 +31,7 @@ impl ChatWidget {
                 | SlashCommand::Presets
                 | SlashCommand::Keymap
                 | SlashCommand::Memories
+                | SlashCommand::Settings
                 | SlashCommand::Config
                 | SlashCommand::Title
                 | SlashCommand::Statusline

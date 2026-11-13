@@ -21,6 +21,236 @@ impl ChatWidget {
         )));
     }
 
+    pub(crate) fn open_settings_panel(&mut self, section_hint: Option<&str>) {
+        if let Some(raw) = section_hint.map(str::trim).filter(|s| !s.is_empty()) {
+            match raw.to_ascii_lowercase().as_str() {
+                "model" | "models" | "effort" | "reasoning" => {
+                    self.open_model_popup();
+                    return;
+                }
+                "theme" | "themes" => {
+                    self.open_theme_picker();
+                    return;
+                }
+                "provider" | "providers" => {
+                    let (view, event) = crate::app::provider::loading();
+                    self.bottom_pane.show_selection_view(view);
+                    self.app_event_tx
+                        .send(crate::app_event::AppEvent::Provider(event));
+                    return;
+                }
+                "account" | "accounts" | "auth" => {
+                    crate::account::show(&mut |line| self.add_info_message(line, None));
+                    return;
+                }
+                "login" => {
+                    self.dispatch_command(crate::slash_command::SlashCommand::Login);
+                    return;
+                }
+                "agent" | "agents" | "subagents" | "autodrive" | "auto" => {
+                    self.app_event_tx
+                        .send(crate::app_event::AppEvent::OpenAgentsOverview);
+                    return;
+                }
+                "memory" | "memories" => {
+                    self.open_memories_popup();
+                    return;
+                }
+                "skill" | "skills" => {
+                    self.open_skills_list();
+                    return;
+                }
+                "mcp" => {
+                    self.add_mcp_output(super::McpServerStatusDetail::ToolsAndAuthOnly);
+                    return;
+                }
+                "permission" | "permissions" | "approval" | "sandbox" | "validation" => {
+                    self.open_permissions_popup();
+                    return;
+                }
+                "statusline" | "status-line" => {
+                    self.open_status_line_setup();
+                    return;
+                }
+                "title" | "terminal-title" => {
+                    self.open_terminal_title_setup();
+                    return;
+                }
+                "keyboard" | "keymap" | "shortcuts" | "keys" => {
+                    self.open_keymap_picker();
+                    return;
+                }
+                "limit" | "limits" | "usage" => {
+                    self.dispatch_command(crate::slash_command::SlashCommand::Status);
+                    return;
+                }
+                "notification" | "notifications" | "notify" | "config" | "preferences"
+                | "appearance" | "effects" | "input" | "sessions" | "selection" => {
+                    self.open_config_panel();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        let compact_model =
+            hanzo::catalog::compact_name(self.current_model(), self.model_display_name());
+        let effort_symbol = hanzo::effort::symbol_for(
+            self.current_model(),
+            self.effective_reasoning_effort()
+                .as_ref()
+                .map(codex_protocol::openai_models::ReasoningEffort::as_str),
+        );
+        let model_summary = format!("{compact_model} {effort_symbol} ›");
+        let theme_summary = format!(
+            "{} ›",
+            self.local_settings
+                .tui
+                .theme
+                .as_deref()
+                .unwrap_or("Automatic")
+        );
+        let provider_summary = format!("{} ›", self.config.model_provider_id);
+        let notifications_enabled = !matches!(
+            self.local_settings.tui.notification_settings.notifications,
+            codex_config::types::Notifications::Enabled(false)
+        );
+        let notif_summary = if notifications_enabled {
+            "On ›".to_string()
+        } else {
+            "Off ›".to_string()
+        };
+        let mcp_summary = format!("{} configured ›", self.config.mcp_servers.get().len());
+
+        let sections: [(&str, &str, String, &str); 15] = [
+            (
+                "model",
+                "Model & Effort",
+                model_summary,
+                "Choose the language model and reasoning effort (○ ◔ ◑ ◕ ●) used for turns.",
+            ),
+            (
+                "theme",
+                "Theme",
+                theme_summary,
+                "Switch between preset color palettes with a live preview.",
+            ),
+            (
+                "providers",
+                "Model Providers",
+                provider_summary,
+                "Choose the default model provider (Hanzo Cloud, Local Engine, or custom).",
+            ),
+            (
+                "accounts",
+                "Accounts",
+                "Inspect ›".to_string(),
+                "View signed-in Hanzo account status and authentication.",
+            ),
+            (
+                "agents",
+                "Agents",
+                "Command Center ›".to_string(),
+                "Open the agent command center and manage subagents.",
+            ),
+            (
+                "memories",
+                "Memories",
+                "Configure ›".to_string(),
+                "Control whether future turns use cross-session memory guidance.",
+            ),
+            (
+                "skills",
+                "Skills",
+                "Manage ›".to_string(),
+                "Manage project-scoped and global skills.",
+            ),
+            (
+                "mcp",
+                "MCP",
+                mcp_summary,
+                "Inspect and manage connected MCP servers and tools.",
+            ),
+            (
+                "permissions",
+                "Permissions",
+                "Configure ›".to_string(),
+                "Choose what Hanzo Dev is allowed to execute and approve.",
+            ),
+            (
+                "notifications",
+                "Notifications",
+                notif_summary,
+                "Adjust desktop and terminal notification preferences.",
+            ),
+            (
+                "statusline",
+                "Status Line",
+                "Configure ›".to_string(),
+                "Choose and reorder items shown below the composer.",
+            ),
+            (
+                "title",
+                "Terminal Title",
+                "Configure ›".to_string(),
+                "Choose and reorder items in your terminal tab or window title.",
+            ),
+            (
+                "keyboard",
+                "Keyboard Shortcuts",
+                "Remap ›".to_string(),
+                "Browse actions and remap their shortcut keys.",
+            ),
+            (
+                "limits",
+                "Limits & Usage",
+                "Inspect ›".to_string(),
+                "Inspect API usage, rate limits, and token activity.",
+            ),
+            (
+                "config",
+                "All Preferences",
+                "Appearance, Input & Sessions ›".to_string(),
+                "Open the full tabbed TUI preferences panel (/config).",
+            ),
+        ];
+
+        let items = sections
+            .into_iter()
+            .map(|(key, name, summary, desc)| {
+                let section_key = key.to_string();
+                crate::bottom_pane::SelectionItem {
+                    name: name.to_string(),
+                    category_tag: Some(format!("{summary:<28}")),
+                    description: Some(desc.to_string()),
+                    search_value: Some(format!("{name} {key} {desc}")),
+                    actions: vec![Box::new(move |tx| {
+                        tx.send(crate::app_event::AppEvent::OpenSettingsSection(
+                            section_key.clone(),
+                        ));
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        let keymap = self.bottom_pane.list_keymap();
+        self.bottom_pane
+            .show_selection_view(crate::bottom_pane::SelectionViewParams {
+                view_id: Some("settings-overview"),
+                title: Some("Settings".to_string()),
+                subtitle: Some("Manage all Hanzo Dev settings in one place".to_string()),
+                footer_hint: Some(
+                    crate::bottom_pane::popup_consts::picker_hint_line_for_keymap(&keymap),
+                ),
+                is_searchable: true,
+                search_placeholder: Some("Type to search settings".to_string()),
+                items,
+                ..crate::bottom_pane::SelectionViewParams::picker()
+            });
+    }
+
     pub(crate) fn open_config_editor(
         &mut self,
         handoff: ConfigEditorHandoff,

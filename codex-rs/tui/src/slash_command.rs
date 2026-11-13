@@ -13,6 +13,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Settings,
     Presets,
     Daybreak,
     Ide,
@@ -102,6 +103,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
+            SlashCommand::Settings => "manage all settings in one place",
             SlashCommand::Config => "configure Hanzo preferences",
             SlashCommand::Feedback => "share session report & logs with Hanzo",
             SlashCommand::New => "start a new chat during a conversation",
@@ -185,6 +187,8 @@ impl SlashCommand {
             self,
             SlashCommand::Review
                 | SlashCommand::Model
+                | SlashCommand::Settings
+                | SlashCommand::Config
                 | SlashCommand::Permissions
                 | SlashCommand::Title
                 | SlashCommand::Statusline
@@ -325,7 +329,10 @@ impl SlashCommand {
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Agents | SlashCommand::MultiAgents => true,
-            SlashCommand::Config | SlashCommand::Theme | SlashCommand::Pets => false,
+            SlashCommand::Settings
+            | SlashCommand::Config
+            | SlashCommand::Theme
+            | SlashCommand::Pets => false,
         }
     }
 
