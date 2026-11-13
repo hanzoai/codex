@@ -27,6 +27,7 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch_spec::create_apply_patch_freeform_tool;
+use crate::tools::handlers::apply_patch_spec::create_apply_patch_json_tool;
 use crate::tools::handlers::file_system_sandbox_policy_context_for_cwd;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::selected_executor;
@@ -63,16 +64,27 @@ use codex_utils_path_uri::PathUri;
 
 const APPLY_PATCH_ARGUMENT_DIFF_BUFFER_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Handles freeform `apply_patch` requests and routes verified patches to the
+/// Handles freeform or JSON `apply_patch` requests and routes verified patches to the
 /// selected environment filesystem.
 #[derive(Default)]
 pub struct ApplyPatchHandler {
     multi_environment: bool,
+    json_mode: bool,
 }
 
 impl ApplyPatchHandler {
     pub(crate) fn new(multi_environment: bool) -> Self {
-        Self { multi_environment }
+        Self {
+            multi_environment,
+            json_mode: false,
+        }
+    }
+
+    pub(crate) fn new_json(multi_environment: bool) -> Self {
+        Self {
+            multi_environment,
+            json_mode: true,
+        }
     }
 }
 
@@ -280,6 +292,29 @@ fn write_permissions_for_paths(
 fn apply_patch_payload_command(payload: &ToolPayload) -> Option<String> {
     match payload {
         ToolPayload::Custom { input } => Some(input.clone()),
+        ToolPayload::Function { arguments } => {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(arguments) {
+                for key in ["patch", "input", "cmd"] {
+                    if let Some(patch) = val.get(key).and_then(serde_json::Value::as_str) {
+                        return Some(patch.to_string());
+                    }
+                }
+                if let Some(command) = val.get("command") {
+                    if let Some(patch) = command.as_str() {
+                        return Some(patch.to_string());
+                    }
+                    if let Some(arr) = command.as_array()
+                        && let Some(last) = arr.last().and_then(serde_json::Value::as_str)
+                    {
+                        return Some(last.to_string());
+                    }
+                }
+            }
+            if arguments.trim_start().starts_with("*** Begin Patch") {
+                return Some(arguments.clone());
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -290,7 +325,11 @@ impl ToolExecutor<ToolInvocation> for ApplyPatchHandler {
     }
 
     fn spec(&self) -> ToolSpec {
-        create_apply_patch_freeform_tool(self.multi_environment)
+        if self.json_mode {
+            create_apply_patch_json_tool(self.multi_environment)
+        } else {
+            create_apply_patch_freeform_tool(self.multi_environment)
+        }
     }
 
     fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
@@ -318,9 +357,9 @@ impl ApplyPatchHandler {
             ..
         } = invocation;
 
-        let ToolPayload::Custom { input: patch_input } = payload else {
+        let Some(patch_input) = apply_patch_payload_command(&payload) else {
             return Err(FunctionCallError::RespondToModel(
-                "apply_patch handler received unsupported payload".to_string(),
+                "apply_patch handler received unsupported payload; pass `{\"patch\": \"*** Begin Patch...*** End Patch\"}`".to_string(),
             ));
         };
         let turn_environment = selected_executor(&environments, &step_context.environments)?;
@@ -342,12 +381,12 @@ impl CoreToolRuntime for ApplyPatchHandler {
         &self,
         invocation: &ToolInvocation,
     ) -> Result<ToolEnvironments, FunctionCallError> {
-        let ToolPayload::Custom { input } = &invocation.payload else {
+        let Some(input) = apply_patch_payload_command(&invocation.payload) else {
             return Err(FunctionCallError::Fatal(
                 "expected apply_patch input".to_string(),
             ));
         };
-        let args = codex_apply_patch::parse_patch(input).map_err(|err| {
+        let args = codex_apply_patch::parse_patch(&input).map_err(|err| {
             FunctionCallError::RespondToModel(format!("apply_patch verification failed: {err}"))
         })?;
         let environment_id =
@@ -360,7 +399,10 @@ impl CoreToolRuntime for ApplyPatchHandler {
     }
 
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Custom { .. })
+        matches!(
+            payload,
+            ToolPayload::Custom { .. } | ToolPayload::Function { .. }
+        )
     }
 
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {

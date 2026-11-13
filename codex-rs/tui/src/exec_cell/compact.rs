@@ -103,9 +103,15 @@ impl ExecCell {
         // Highlight before clipping so the compact row keeps the same shell token colors.
         let mut command_lines = highlight_bash_to_lines(&script).into_iter();
         let mut header = command_lines.next().unwrap_or_default();
-        header
-            .spans
-            .splice(0..0, [marker, " ".into(), title.bold(), " ".into()]);
+        if marker.content.chars().count() < 2 {
+            header
+                .spans
+                .splice(0..0, [marker, " ".into(), title.bold(), " ".into()]);
+        } else {
+            header
+                .spans
+                .splice(0..0, [marker, title.bold(), " ".into()]);
+        }
         if command_lines.next().is_some() {
             header.push_span(" …");
         }

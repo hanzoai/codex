@@ -55,7 +55,7 @@ pub(crate) fn loading_glyph_with_delay(
     requester: &FrameRequester,
 ) -> &'static str {
     const FRAME_DURATION: Duration = Duration::from_millis(100);
-    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const FRAMES: [&str; 9] = ["⠇⠀", "⠋⠀", "⠉⠁", "⠈⠃", "⠀⠇", "⠠⠆", "⠤⠄", "⠦⠀", "⠗⠇"];
     if mode == MotionMode::Reduced {
         return "◌";
     }
@@ -96,44 +96,36 @@ pub(crate) fn shimmer_text(text: &str, motion_mode: MotionMode) -> Vec<Span<'sta
     }
 }
 
-/// The running mark is two Braille cells, a grid of four dots by four. A short comet of dots goes
-/// round the edge of the grid, and every few turns the dots gather into an H and let go again.
+/// The running mark is two Braille cells using a three-by-three dot grid (columns 0..=2, rows 0..=2).
+/// A short comet of dots goes round the edge of the 3x3 grid, and every few turns the dots gather
+/// into an H and let go again.
 pub(crate) const INDICATOR_STEP_MS: u64 = 90;
 const ORBIT_STEP_MS: u128 = INDICATOR_STEP_MS as u128;
 const ORBIT_TURNS: u128 = 3;
-const HOLD_H_MS: u128 = 700;
-/// The edge of the grid, clockwise from the top left: (column, row).
-const ORBIT: [(u8, u8); 12] = [
+const HOLD_H_MS: u128 = ORBIT_STEP_MS * 2;
+/// The edge of the 3x3 grid, clockwise from the top left: (column, row).
+const ORBIT: [(u8, u8); 8] = [
     (0, 0),
     (1, 0),
     (2, 0),
-    (3, 0),
-    (3, 1),
-    (3, 2),
-    (3, 3),
-    (2, 3),
-    (1, 3),
-    (0, 3),
+    (2, 1),
+    (2, 2),
+    (1, 2),
     (0, 2),
     (0, 1),
 ];
-/// The H: both sides, and the bar across the middle two rows.
-const H: [(u8, u8); 12] = [
+/// The 3x3 H: both sides (columns 0 and 2, rows 0..=2), and the center dot (1, 1).
+const H: [(u8, u8); 7] = [
     (0, 0),
     (0, 1),
     (0, 2),
-    (0, 3),
-    (3, 0),
-    (3, 1),
-    (3, 2),
-    (3, 3),
-    (1, 1),
+    (2, 0),
     (2, 1),
-    (1, 2),
     (2, 2),
+    (1, 1),
 ];
 
-/// Two Braille cells holding the dots at these (column, row) places of the four-by-four grid.
+/// Two Braille cells holding the dots at these (column, row) places of the 3x3 grid.
 fn braille_pair(dots: &[(u8, u8)]) -> String {
     const LEFT: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
     const RIGHT: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
@@ -149,7 +141,7 @@ fn braille_pair(dots: &[(u8, u8)]) -> String {
         .collect()
 }
 
-fn indicator_dots(elapsed: Duration) -> String {
+pub(crate) fn indicator_dots(elapsed: Duration) -> String {
     let orbit_ms = ORBIT_STEP_MS * ORBIT.len() as u128 * ORBIT_TURNS;
     let t = elapsed.as_millis() % (orbit_ms + HOLD_H_MS);
     if t >= orbit_ms {
@@ -204,6 +196,17 @@ mod tests {
             ),
             Some("●".white().bold())
         );
+    }
+
+    #[test]
+    fn indicator_dots_uses_3x3_grid_for_orbit_and_h() {
+        assert_eq!(indicator_dots(Duration::from_millis(0)), "⠇⠀");
+        assert_eq!(
+            indicator_dots(Duration::from_millis(INDICATOR_STEP_MS * 2)),
+            "⠉⠁"
+        );
+        let h_start_ms = (ORBIT_STEP_MS * ORBIT.len() as u128 * ORBIT_TURNS) as u64;
+        assert_eq!(indicator_dots(Duration::from_millis(h_start_ms)), "⠗⠇");
     }
 
     #[test]

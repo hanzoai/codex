@@ -140,7 +140,11 @@ impl HistoryCell for WebSearchCell {
             )
             .unwrap_or_else(|| "•".dim())
         };
-        let mut line = Line::from(vec![bullet, " ".into()]);
+        let mut line = if bullet.content.chars().count() < 2 {
+            Line::from(vec![bullet, " ".into()])
+        } else {
+            Line::from(vec![bullet])
+        };
         let mut summary = self.summary();
         for span in &mut summary.spans {
             span.content = span.content.replace(['\n', '\r', '\t'], " ").into();

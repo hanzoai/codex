@@ -188,20 +188,17 @@ const HANZO_INSTRUCTIONS_SUPPLEMENT: &str = r#"
   - **Enso** (`enso`, `enso-auto`, `enso-pro`, `enso-ultra`): Multi-model coding orchestration across the Hanzo catalog (`api.hanzo.ai/v1`).
   - **Kai** (`kai`, `~/.hanzo/dev/kai.toml`): Real-time decision agent over the Hanzo Decisions API (`api.hanzo.ai/v1/decisions`) providing model/reasoning routing, trigram workspace context discovery (`hanzo-trigram`), skill & tool selection, command risk gating, progress steering, and completion checks.
   - **Zen** (`zen5`, `zen5-pro`, `zen5-coder`, `zen6`, `zen6-flash`): Hanzo flagship reasoning and coding models (`hanzoai/engine`).
-- **Native HIP-0300 MCP (`hanzo-mcp` / `@hanzo/mcp`)**: `dev` co-installs and connects to `hanzo-mcp` (`mcp_servers.hanzo`) alongside built-in workspace tools (`exec_command`, `apply_patch`). The 13 unified HIP-0300 tools (`mcp__hanzo__*`) use `action` routing:
-  - `fs` (`read`, `write`, `edit`, `patch`, `list`, `tree`, `find`, `stat`, `mkdir`, `rm`, `mv`, `cp`, `search_text`)
-  - `exec` (`exec`, `ps`, `kill`, `logs`)
-  - `code` (`parse`, `serialize`, `symbols`, `definition`, `references`, `diagnostics`, `transform`, `summarize`)
-  - `git` (`status`, `diff`, `log`, `blame`, `commit`, `branch`, `checkout`, `stash`, `tag`, `merge`, `rebase`)
-  - `test` (`run`, `check`, `build`, `coverage`, `discover`)
-  - `fetch` (`search`, `fetch`, `head`, `crawl`, `request`, `open`)
-  - `workspace` (`detect`, `help`, `status`, `schema`, `doctor`)
-  - `computer` (`screenshot`, `click`, `move`, `type`, `press`, `scroll`, `window`, `clipboard`, `browser` via persistent `hanzo-browser` / ZAP bridge `$XDG_RUNTIME_DIR/zap/zapd.sock` / CDP `127.0.0.1:9222`)
-  - `think` (`think`, `critic`, `review`, `decompose`, `Hypothesize`, `Synth`)
-  - `memory` (`recall`, `store`, `update`, `delete`, `search`, `consolidate`, `kb`)
-  - `hanzo` (`iam`, `kms`, `paas`, `cloud`, `base`, `commerce`, `storage`, `dns`, `certs`, `billing`, `ingress`, `Registry`, `team`, `doctor`, `social`)
-  - `plan` (`create`, `show`, `update`, `add_step`, `remove_step`, `estimate`, `archive`, `list`)
-  - `tasks` (`add`, `update`, `done`, `cancel`, `list`, `next`, `board`, `clear`)
+- **Native Agentic Coding Flow (Built-in Codex Tools First)**:
+  - Always use built-in **`exec_command`** (and **`write_stdin`**) for all workspace exploration (`rg`, `rg --files`, `ls`, `sed -n`, `cat`, `head`, `tail`, `find`), git commands (`git status`, `git diff`, `git log`), builds, and test runs so the TUI groups read/search/list operations into native **`Exploring` / `Explored`** cells.
+  - Always use built-in **`apply_patch`** (`{"patch": "*** Begin Patch\n*** Update File: ..."}`) to create, update, or delete files so changes render as native diff cells.
+  - Use **`update_plan`** for multi-step task plans, **`view_image`** for local images, **`request_user_input`** for structured user questions, and **`spawn_agent`** / subagent tools for parallel subtasks.
+  - Never use MCP `fs` or `exec` tools for local file reading, listing, searching, patching, or shell execution.
+- **Slim Companion MCP (`hanzo-mcp` / `@hanzo/mcp`)**: `dev` connects to `hanzo-mcp` (`mcp_servers.hanzo`) for the 5 specialized non-overlapping tools (`mcp__hanzo__*`):
+  - `code_search`: Trigram symbol and cross-repo code search (`hanzo-trigram`).
+  - `lsp`: Language Server Protocol navigation (`definition`, `references`, `diagnostics`, `symbols`).
+  - `browser`: Persistent browser automation (`hanzo-browser` / ZAP bridge `$XDG_RUNTIME_DIR/zap/zapd.sock` / CDP `127.0.0.1:9222`).
+  - `web_search`: Live web search.
+  - `web_read`: Clean web page and documentation extraction.
 - **Native Hanzo OSS Skills Stack (`SKILL.md` & `hanzoskills.com`)**:
   - Skills live in `<cwd>/.hanzo/dev/skills/*/SKILL.md`, `<cwd>/.hanzo/skills/*/SKILL.md`, `<cwd>/.agents/skills/*/SKILL.md`, and `~/.hanzo/dev/skills/*/SKILL.md` (including built-in `dev`, `code-review`, `ui`, `hanzo-mcp`, and `hanzo-oss` skills).
   - Use progressive disclosure when consulting `hanzoskills.com`: Level 0 index (`https://hanzoskills.com/mcp/index.json` and `https://hanzoskills.com/oss/index.json`) -> Level 1 per-tool/skill (`https://hanzoskills.com/mcp/<tool>.json` or `https://hanzoskills.com/<skill>.md`) -> Level 2 live contract (`POST https://api.hanzo.ai/v1/mcp` `describe` or `hanzo <group> --help`).
@@ -219,6 +216,10 @@ fn hanzo_model_messages() -> ModelMessages {
         .replace(
             "Within this context, Codex refers to the open-source agentic coding interface (not the old Codex language model built by OpenAI).",
             "Within this context, Hanzo Dev (`dev`) refers to the agentic coding interface paired with Hanzo MCP (`hanzo-mcp`) and Hanzo Skills (`SKILL.md`).",
+        )
+        .replace(
+            r#"{"command":["apply_patch","*** Begin Patch\n*** Update File: path/to/file.py\n@@ def example():\n- pass\n+ return 123\n*** End Patch"]}"#,
+            r#"{"patch":"*** Begin Patch\n*** Update File: path/to/file.py\n@@ def example():\n- pass\n+ return 123\n*** End Patch"}"#,
         );
     ModelMessages {
         instructions_template: Some(format!("{base}{HANZO_INSTRUCTIONS_SUPPLEMENT}")),

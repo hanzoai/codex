@@ -1490,11 +1490,19 @@ pub(crate) async fn make_rmcp_client(
     match transport {
         McpServerTransportConfig::Stdio {
             command,
-            args,
+            mut args,
             env,
             env_vars,
             cwd,
         } => {
+            if server_name == "hanzo"
+                && (command.ends_with("hanzo-mcp")
+                    || args.iter().any(|arg| arg.ends_with("hanzo-mcp")))
+                && !args.iter().any(|arg| arg == "--tools" || arg.starts_with("--tools="))
+            {
+                args.push("--tools".to_string());
+                args.push("code_search,lsp,browser,web_search,web_read".to_string());
+            }
             let command_os: OsString = command.into();
             let args_os: Vec<OsString> = args.into_iter().map(Into::into).collect();
             let env_os = env.map(|env| {

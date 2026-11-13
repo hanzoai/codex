@@ -30,9 +30,9 @@ use super::status_state::TerminalTitleStatusKind;
 pub(super) const DEFAULT_TERMINAL_TITLE_ITEMS: [&str; 3] =
     ["activity", "thread-name", "project-name"];
 
-/// Braille-pattern dot-spinner frames for the terminal title animation.
-pub(super) const TERMINAL_TITLE_SPINNER_FRAMES: [&str; 10] =
-    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/// Braille-pattern 3x3 dot-spinner frames for the terminal title animation.
+pub(super) const TERMINAL_TITLE_SPINNER_FRAMES: [&str; 9] =
+    ["⠇⠀", "⠋⠀", "⠉⠁", "⠈⠃", "⠀⠇", "⠠⠆", "⠤⠄", "⠦⠀", "⠗⠇"];
 
 /// Time between spinner frame advances in the terminal title.
 pub(super) const TERMINAL_TITLE_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
@@ -1063,7 +1063,10 @@ impl ChatWidget {
         let spinner = (self.local_settings.tui.animations
             && self.local_settings.tui.effects.progress
             && self.terminal_title_has_active_progress())
-        .then(|| self.terminal_title_spinner_frame_at(now));
+        .then(|| {
+            let elapsed = now.saturating_duration_since(self.terminal_title_animation_origin);
+            crate::motion::indicator_dots(elapsed)
+        });
         if self.realtime_microphone_is_listening() {
             return Some(match spinner {
                 Some(frame) => format!("● {frame}"),
@@ -1071,7 +1074,7 @@ impl ChatWidget {
             });
         }
 
-        spinner.map(str::to_string)
+        spinner
     }
 
     pub(super) fn terminal_title_spinner_frame_at(&self, now: Instant) -> &'static str {

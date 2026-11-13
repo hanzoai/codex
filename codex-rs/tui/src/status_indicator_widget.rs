@@ -244,8 +244,11 @@ impl StatusIndicator<'_> {
             progress,
             ReducedMotionIndicator::Hidden,
         ) {
+            let needs_space = indicator.content.chars().count() < 2;
             spans.push(indicator);
-            spans.push(" ".into());
+            if needs_space {
+                spans.push(" ".into());
+            }
         }
         spans.extend(summary_shimmer(
             &row.header,

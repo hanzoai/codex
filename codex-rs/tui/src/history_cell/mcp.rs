@@ -188,7 +188,11 @@ impl McpToolCallCell {
         } else {
             line_to_static(&format_mcp_invocation(&self.invocation))
         };
-        let mut compact_spans = vec![bullet.clone(), " ".into()];
+        let mut compact_spans = if bullet.content.chars().count() < 2 {
+            vec![bullet.clone(), " ".into()]
+        } else {
+            vec![bullet.clone()]
+        };
         if title.is_none() {
             compact_spans.extend([header_text.bold(), " ".into()]);
         }
@@ -811,20 +815,18 @@ impl McpInventoryLoadingCell {
 
 impl HistoryCell for McpInventoryLoadingCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        vec![
-            vec![
-                activity_indicator(
-                    Some(self.start_time),
-                    MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
-                " ".into(),
-                "Loading MCP inventory".bold(),
-                "…".dim(),
-            ]
-            .into(),
-        ]
+        let indicator = activity_indicator(
+            Some(self.start_time),
+            MotionMode::from_animations_enabled(self.animations_enabled),
+            ReducedMotionIndicator::StaticBullet,
+        )
+        .unwrap_or_else(|| "•".dim());
+        let mut spans = vec![indicator];
+        if spans[0].content.chars().count() < 2 {
+            spans.push(" ".into());
+        }
+        spans.extend(["Loading MCP inventory".bold(), "…".dim()]);
+        vec![spans.into()]
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {

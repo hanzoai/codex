@@ -1,6 +1,9 @@
 use codex_tools::FreeformTool;
 use codex_tools::FreeformToolFormat;
+use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
+use std::collections::BTreeMap;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("../../../assets/tools/apply_patch.lark");
 
@@ -24,6 +27,39 @@ pub fn create_apply_patch_freeform_tool(include_environment_id: bool) -> ToolSpe
             syntax: "lark".to_string(),
             definition,
         },
+    })
+}
+
+/// Returns a standard JSON function `apply_patch` tool compatible with all OpenAI-compatible
+/// `/v1/responses` providers (Enso, Zen, Claude, Gemini, Qwen, DeepSeek, local engines).
+pub fn create_apply_patch_json_tool(include_environment_id: bool) -> ToolSpec {
+    let mut properties = BTreeMap::from([(
+        "patch".to_string(),
+        JsonSchema::string(Some(
+            "Patch text starting with `*** Begin Patch` and ending with `*** End Patch` (using `*** Add File: <path>`, `*** Update File: <path>`, or `*** Delete File: <path>` sections)."
+                .to_string(),
+        )),
+    )]);
+    if include_environment_id {
+        properties.insert(
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Environment id from <environment_context>. Omit to use the primary environment."
+                    .to_string(),
+            )),
+        );
+    }
+    ToolSpec::Function(ResponsesApiTool {
+        name: "apply_patch".to_string(),
+        description: "Edit, create, or delete files in the workspace using a structured patch (`*** Begin Patch ... *** End Patch`).".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["patch".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: None,
     })
 }
 

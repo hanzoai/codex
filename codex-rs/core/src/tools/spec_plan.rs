@@ -150,7 +150,7 @@ pub(crate) fn build_tool_router(
     let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
     add_core_tool_sources(&context, &mut registry);
 
-    let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
+    let mut registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
         mcp,
         &turn_context.config,
         apps_enabled,
@@ -159,6 +159,26 @@ pub(crate) fn build_tool_router(
         session.services.mcp_manager.shared_definitions(),
         &mut registry,
     );
+    // Hanzo: Never let `hanzo-mcp` or `cloud` MCP tools shadow Codex's built-in
+    // agentic coding tools (`exec_command`, `write_stdin`, `apply_patch`, `update_plan`).
+    for namespace in ["mcp__hanzo", "mcp__cloud"] {
+        for shadowed in [
+            "fs",
+            "exec",
+            "git",
+            "test",
+            "code",
+            "plan",
+            "tasks",
+            "think",
+            "workspace",
+            "fetch",
+        ] {
+            let shadowed_name = ToolName::namespaced(namespace, shadowed);
+            registered_mcp_tools.remove(&shadowed_name);
+            registry.remove(&shadowed_name);
+        }
+    }
     let search = step_store.get::<crate::model_search::ModelSearch>();
     apply_mcp_tool_exposure_policy(
         turn_context,
@@ -1489,6 +1509,14 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     if context.model_info.apply_patch_tool_type.is_some() {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
         registry.add(ApplyPatchHandler::new(include_environment_id));
+    } else if hanzo::catalog::find(&context.model_info.slug).is_some()
+        || matches!(
+            context.turn_context.config.model_provider_id.as_str(),
+            "hanzo" | "local" | "hanzocode"
+        )
+    {
+        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+        registry.add(ApplyPatchHandler::new_json(include_environment_id));
     }
 
     if context

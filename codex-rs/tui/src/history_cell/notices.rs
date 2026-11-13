@@ -373,20 +373,18 @@ impl ThreadRecapLoadingCell {
 
 impl HistoryCell for ThreadRecapLoadingCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        vec![
-            vec![
-                activity_indicator(
-                    Some(self.start_time),
-                    MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
-                " ".into(),
-                "Generating conversation recap".bold(),
-                "…".dim(),
-            ]
-            .into(),
-        ]
+        let indicator = activity_indicator(
+            Some(self.start_time),
+            MotionMode::from_animations_enabled(self.animations_enabled),
+            ReducedMotionIndicator::StaticBullet,
+        )
+        .unwrap_or_else(|| "•".dim());
+        let mut spans = vec![indicator];
+        if spans[0].content.chars().count() < 2 {
+            spans.push(" ".into());
+        }
+        spans.extend(["Generating conversation recap".bold(), "…".dim()]);
+        vec![spans.into()]
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
