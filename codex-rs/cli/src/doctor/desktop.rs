@@ -132,21 +132,16 @@ pub(super) fn inspect_desktop_session(
     (true, check)
 }
 
-fn desktop_log_root(identity: &str) -> Option<PathBuf> {
-    let root = match env::consts::OS {
-        "macos" => PathBuf::from(env::var_os("HOME")?)
-            .join("Library/Logs")
-            .join(identity),
-        "windows" => {
-            let local = env::var_os("LOCALAPPDATA").map(PathBuf::from).or_else(|| {
-                env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("AppData/Local"))
-            })?;
-            local.join("Codex/Logs")
-        }
-        _ => return None,
-    };
-
-    Some(root)
+/// Hanzo: Hanzo Desktop's log directory (`~/Library/Logs/com.hanzo.desktop` on
+/// macOS), not the Codex app's (#763).
+fn desktop_log_root(_identity: &str) -> Option<PathBuf> {
+    let home = match env::consts::OS {
+        "windows" => env::var_os("USERPROFILE"),
+        _ => env::var_os("HOME"),
+    }
+    .map(PathBuf::from);
+    let local = env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    hanzo::desktop::log_root(env::consts::OS, home.as_deref(), local.as_deref())
 }
 
 fn discover_desktop_logs(directory: &Path) -> Vec<DesktopLog> {
