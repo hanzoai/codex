@@ -1297,17 +1297,20 @@ impl ModelClient {
             &prompt.output_schema,
             prompt.output_schema_strict,
         );
-        let service_tier = model_info
-            .service_tier_for_request(service_tier)
-            .filter(|tier| {
-                // Bedrock requires an advertised tier, including for flex, which the
-                // generic OpenAI resolver permits without catalog support.
-                !self.provider().info().is_amazon_bedrock()
-                    || model_info
-                        .service_tiers
-                        .iter()
-                        .any(|supported| supported.id == *tier)
-            });
+        // Hanzo: api.hanzo.ai refuses any service_tier with a 400 (#756).
+        let service_tier = hanzo::service_tier_for(
+            self.provider().info().base_url.as_deref(),
+            model_info.service_tier_for_request(service_tier),
+        )
+        .filter(|tier| {
+            // Bedrock requires an advertised tier, including for flex, which the
+            // generic OpenAI resolver permits without catalog support.
+            !self.provider().info().is_amazon_bedrock()
+                || model_info
+                    .service_tiers
+                    .iter()
+                    .any(|supported| supported.id == *tier)
+        });
         if !include_internal {
             for item in &mut input {
                 item.clear_tool_result_metadata();
@@ -1801,9 +1804,11 @@ impl ModelClientSession {
                 client_setup.auth.as_ref(),
                 &responses_headers,
                 &model_info.slug,
-                model_info
-                    .service_tier_for_request(service_tier.clone())
-                    .as_deref(),
+                hanzo::service_tier_for(
+                    self.client.provider().info().base_url.as_deref(),
+                    model_info.service_tier_for_request(service_tier.clone()),
+                )
+                .as_deref(),
             );
             match self
                 .websocket_connection(WebsocketConnectParams {

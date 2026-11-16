@@ -77,6 +77,19 @@ pub const FEEDBACK_KEY: &str = "pk-YO48Xen0YayGE5n3t0jBv-GWR81uX5qzG3-s9tLPF-4";
 pub const FEEDBACK_ISSUE_URL: &str = "https://github.com/hanzoai/cli/issues/new";
 pub const FEEDBACK_POLICY_URL: &str = "https://hanzo.ai/privacy";
 
+/// Whether Dev offers a service tier ("Fast", `service_tier: "priority"`) for Hanzo's
+/// models. It does not: api.hanzo.ai prices each request by its model alone and
+/// refuses any `service_tier` with a 400 ("it would buy something this model's price
+/// does not cover"), so a tier picked in Dev failed the whole turn, `/init` included
+/// (hanzo-inc/cloud#756).
+pub const SERVICE_TIERS: bool = false;
+
+/// The `service_tier` a request to `base_url` carries: none to Hanzo's API, which
+/// refuses every tier (see [`SERVICE_TIERS`]); the caller's choice anywhere else.
+pub fn service_tier_for(base_url: Option<&str>, tier: Option<String>) -> Option<String> {
+    tier.filter(|_| SERVICE_TIERS || !is_hanzo(base_url))
+}
+
 /// Whether a provider's base URL is [`API_BASE`].
 pub fn is_hanzo(base_url: Option<&str>) -> bool {
     base_url.is_some_and(|url| url.trim_end_matches('/') == API_BASE)
@@ -95,11 +108,34 @@ mod tests {
         assert!(!is_hanzo(None));
     }
 
+    /// #756: api.hanzo.ai answers any `service_tier` with a 400, so none is sent there,
+    /// while another provider still gets the tier its user picked.
+    #[test]
+    fn no_service_tier_goes_to_hanzo() {
+        for tier in ["priority", "flex", "fast", "default"] {
+            assert_eq!(
+                service_tier_for(Some(API_BASE), Some(tier.to_string())),
+                None
+            );
+        }
+        assert_eq!(
+            service_tier_for(
+                Some("https://api.openai.com/v1"),
+                Some("priority".to_string())
+            ),
+            Some("priority".to_string())
+        );
+        assert_eq!(service_tier_for(Some(API_BASE), None), None);
+    }
+
     /// The link `/feedback` prints opens a repository that takes issues: `hanzoai/dev`
     /// and `hanzoai/codex` have them turned off and answer `/issues/new` with a 404.
     #[test]
     fn feedback_issue_link_opens_a_repository_that_takes_issues() {
-        assert_eq!(FEEDBACK_ISSUE_URL, "https://github.com/hanzoai/cli/issues/new");
+        assert_eq!(
+            FEEDBACK_ISSUE_URL,
+            "https://github.com/hanzoai/cli/issues/new"
+        );
         // The TUI appends the query, so the base carries none of its own.
         assert!(!FEEDBACK_ISSUE_URL.contains('?'));
     }

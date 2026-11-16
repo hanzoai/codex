@@ -294,3 +294,16 @@ fn model_context_window_uses_model_value_without_override() {
 
     assert_eq!(updated, model);
 }
+
+/// hanzo-inc/cloud#756: a Hanzo model offers no "Fast" (priority) tier, which
+/// api.hanzo.ai refuses with a 400 that failed `/init`.
+#[test]
+fn hanzo_models_offer_no_service_tier() {
+    let model = model_info_from_slug("enso-auto");
+    assert!(model.service_tiers.is_empty(), "{:?}", model.service_tiers);
+    assert!(model.additional_speed_tiers.is_empty());
+    assert_eq!(
+        model.service_tier_for_request(Some("priority".to_string())),
+        None
+    );
+}

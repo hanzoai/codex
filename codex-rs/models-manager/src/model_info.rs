@@ -120,12 +120,13 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         visibility: ModelVisibility::None,
         supported_in_api: true,
         priority: 99,
-        additional_speed_tiers: if known.is_some() {
+        // Hanzo: no "Fast" tier is offered; api.hanzo.ai refuses service_tier (#756).
+        additional_speed_tiers: if known.is_some() && hanzo::SERVICE_TIERS {
             vec!["fast".to_string()]
         } else {
             Vec::new()
         },
-        service_tiers: if known.is_some() {
+        service_tiers: if known.is_some() && hanzo::SERVICE_TIERS {
             vec![codex_protocol::openai_models::ModelServiceTier {
                 id: "priority".to_string(),
                 name: "Fast".to_string(),
@@ -162,7 +163,9 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
         input_modalities: match known {
-            Some(model) if !model.vision => vec![codex_protocol::openai_models::InputModality::Text],
+            Some(model) if !model.vision => {
+                vec![codex_protocol::openai_models::InputModality::Text]
+            }
             _ => default_input_modalities(),
         },
         supports_search_tool: false,
