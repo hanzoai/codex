@@ -102,7 +102,7 @@ async fn save_feedback_zip(
     params: FeedbackUploadParams,
 ) -> Result<FeedbackReceipt> {
     let home = codex_home
-        .ok_or_else(|| eyre!("The app server did not report its Codex home directory"))?;
+        .ok_or_else(|| eyre!("The app server did not report its Hanzo home directory"))?;
     let directory = home.join(FEEDBACK_DIR);
     fs.fs_create_directory_all_path(&directory)
         .await
@@ -125,7 +125,7 @@ async fn save_feedback_zip(
             TypedRequestError::Server { source, .. }
                 if is_method_unsupported(source, "feedback/save") =>
             {
-                eyre!("Update the Codex server to save a feedback ZIP")
+                eyre!("Update the Hanzo server to save a feedback ZIP")
             }
             _ => color_eyre::Report::from(err),
         })?;

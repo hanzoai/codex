@@ -295,7 +295,7 @@ async fn daybreak_refusal_offers_enable_for_the_next_turn() {
         .iter()
         .find(|notice| notice.contains("Daybreak is on"))
         .unwrap_or_else(|| panic!("missing Daybreak-on notice: {notices:#?}"));
-    assert!(notice.contains("You can ask Codex for an overview"));
+    assert!(notice.contains("You can ask Hanzo for an overview"));
     let picker = render_bottom_popup(&chat, /*width*/ 80);
     assert!(picker.contains("Overview"));
     assert!(!picker.contains("Enable Daybreak"));
