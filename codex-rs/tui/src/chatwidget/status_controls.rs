@@ -406,6 +406,60 @@ impl ChatWidget {
         preview_data
     }
 
+    /// /context: how much of the model's window the conversation holds, what the
+    /// last request carried, and where auto-compaction starts.
+    pub(crate) fn add_context_output(&mut self) {
+        use crate::status::format_tokens_compact as tokens;
+        let default_usage = TokenUsage::default();
+        let last = self
+            .token_info
+            .as_ref()
+            .map(|info| &info.last_token_usage)
+            .unwrap_or(&default_usage);
+        let total = self
+            .token_info
+            .as_ref()
+            .map(|info| &info.total_token_usage)
+            .unwrap_or(&default_usage);
+        let mut lines = Vec::new();
+        match self.status_line_context_window_size() {
+            Some(window) => {
+                let used = last.tokens_in_context_window();
+                let left = last.percent_of_context_window_remaining(window).clamp(0, 100);
+                lines.push(format!(
+                    "Context: {}% used, {} of {} tokens ({}% left)",
+                    100 - left,
+                    tokens(used),
+                    tokens(window),
+                    left
+                ));
+            }
+            None => lines.push(format!(
+                "Context: {} tokens used; this model's window is not known",
+                tokens(last.tokens_in_context_window())
+            )),
+        }
+        if !last.is_zero() {
+            lines.push(format!(
+                "Last request: {} input ({} cached), {} output",
+                tokens(last.input_tokens),
+                tokens(last.cached_input()),
+                tokens(last.output_tokens)
+            ));
+        }
+        if !total.is_zero() {
+            lines.push(format!("Session: {} tokens", tokens(total.total_tokens)));
+        }
+        if let Some(limit) = self.config.model_auto_compact_token_limit {
+            lines.push(format!("Auto-compacts at {} tokens", tokens(limit)));
+        }
+        let hint = Some("/compact frees space".to_string());
+        let last_line = lines.len() - 1;
+        for (i, line) in lines.into_iter().enumerate() {
+            self.add_info_message(line, if i == last_line { hint.clone() } else { None });
+        }
+    }
+
     pub(super) fn status_line_context_window_size(&self) -> Option<i64> {
         self.token_info
             .as_ref()

@@ -602,9 +602,12 @@ impl ChatWidget {
                 );
             }
             SlashCommand::Usage => {
-                if self.ensure_usage_command_available() {
+                if self.ensure_usage_command_available("") {
                     self.open_usage_menu();
                 }
+            }
+            SlashCommand::Context => {
+                self.add_context_output();
             }
             SlashCommand::Ide => {
                 self.handle_ide_command();
@@ -883,7 +886,7 @@ impl ChatWidget {
                 self.add_error_message("Usage: /pwd".to_string());
             }
             SlashCommand::Usage => {
-                if self.ensure_usage_command_available() {
+                if self.ensure_usage_command_available(trimmed) {
                     match crate::analytics::TokenActivityView::parse(trimmed) {
                         Some(view) => self
                             .app_event_tx
@@ -1309,7 +1312,8 @@ impl ChatWidget {
             collaboration_modes_enabled: self.collaboration_modes_enabled(),
             connectors_enabled: self.connectors_enabled(),
             plugins_command_enabled: self.config.features.enabled(Feature::Plugins),
-            token_activity_command_enabled: self.has_codex_backend_auth,
+            token_activity_command_enabled: self.has_codex_backend_auth
+                || crate::account::registered(),
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: !self.current_model_service_tier_commands().is_empty(),
             daybreak_command_description: self.daybreak_command_description(),
@@ -1320,9 +1324,23 @@ impl ChatWidget {
         }
     }
 
-    fn ensure_usage_command_available(&mut self) -> bool {
+    /// True when the ChatGPT backend serves /usage. Otherwise a registered account
+    /// answers it over `range`, and without one the sign-in it needs is named.
+    fn ensure_usage_command_available(&mut self, range: &str) -> bool {
         if self.has_codex_backend_auth {
             return true;
+        }
+        if crate::account::registered() {
+            let tx = self.app_event_tx.clone();
+            crate::account::usage(
+                range,
+                Box::new(move |line| {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        crate::history_cell::new_info_event(line, /*hint*/ None),
+                    )));
+                }),
+            );
+            return false;
         }
         self.add_error_message(USAGE_CHATGPT_LOGIN_REQUIRED.to_string());
         false
@@ -1338,6 +1356,7 @@ impl ChatWidget {
             | SlashCommand::Daemon
             | SlashCommand::Pwd
             | SlashCommand::Usage
+            | SlashCommand::Context
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop

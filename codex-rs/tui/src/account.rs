@@ -1,4 +1,4 @@
-//! The account behind /login, /logout, /auth and /status, when the binary has one.
+//! The account behind /login, /logout, /auth, /status and /usage, when the binary has one.
 //!
 //! Upstream signs in through the app server alone. A binary with an account of its
 //! own registers it here before the TUI starts. With none registered, /login and
@@ -16,6 +16,9 @@ pub struct Account {
     pub logout: fn(&mut dyn FnMut(String)),
     /// Say who is signed in.
     pub show: fn(&mut dyn FnMut(String)),
+    /// Say what the account used over a window (/usage's argument, empty for the
+    /// default). It may run beside the interface, so `emit` outlives the call.
+    pub usage: fn(&str, Box<dyn Fn(String) + Send + Sync>),
 }
 
 static ACCOUNT: OnceLock<Account> = OnceLock::new();
@@ -44,5 +47,11 @@ pub(crate) fn logout(emit: &mut dyn FnMut(String)) {
 pub(crate) fn show(emit: &mut dyn FnMut(String)) {
     if let Some(account) = ACCOUNT.get() {
         (account.show)(emit);
+    }
+}
+
+pub(crate) fn usage(range: &str, emit: Box<dyn Fn(String) + Send + Sync>) {
+    if let Some(account) = ACCOUNT.get() {
+        (account.usage)(range, emit);
     }
 }
