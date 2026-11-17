@@ -236,8 +236,11 @@ fn parity_check_from_scan_and_rows(
             .push(row);
     }
 
-    let missing_active = missing_rollout_paths(&scan.files, &rows_by_key, /*archived*/ false);
-    let missing_archived = missing_rollout_paths(&scan.files, &rows_by_key, /*archived*/ true);
+    let (current_files, superseded) = split_superseded(&scan.files, &rows);
+    let missing_active =
+        missing_rollout_paths(&current_files, &rows_by_key, /*archived*/ false);
+    let missing_archived =
+        missing_rollout_paths(&current_files, &rows_by_key, /*archived*/ true);
     let scan_complete = !scan.reached_scan_cap;
     let stale_rows = if scan_complete {
         rows.iter()
@@ -271,7 +274,7 @@ fn parity_check_from_scan_and_rows(
     } else {
         Vec::new()
     };
-    let duplicate_rollout_thread_ids = duplicate_rollout_thread_ids(&scan.files);
+    let duplicate_rollout_thread_ids = duplicate_rollout_thread_ids(&current_files);
     let duplicate_db_paths = duplicate_db_paths(&rows_by_key);
     let archived_rows = rows.iter().filter(|row| row.archived).count();
     let active_rows = rows.len() - archived_rows;
@@ -301,6 +304,7 @@ fn parity_check_from_scan_and_rows(
             "rollout DB duplicate DB paths: {}",
             duplicate_db_paths.len()
         ),
+        format!("rollout DB superseded files: {}", superseded.len()),
         format!(
             "rollout DB model providers: {}",
             count_summary(rows.iter().map(|row| row.model_provider.as_str()))
@@ -624,6 +628,33 @@ fn missing_rollout_paths<'a>(
         .collect()
 }
 
+/// Splits the scanned rollouts into the ones the inventory judges and the ones a
+/// rollover superseded. A session that rolls over into a new rollout file leaves
+/// the old file where it was and points its thread's row at the new one; the old
+/// file is then neither missing from the DB nor a second copy of the thread, so it
+/// is counted apart rather than reported (cloud#762). A file is superseded only
+/// when its thread's row names another scanned file of the same thread.
+fn split_superseded<'a>(
+    files: &'a [RolloutAuditFile],
+    rows: &[ThreadStateAuditRow],
+) -> (Vec<RolloutAuditFile>, Vec<&'a RolloutAuditFile>) {
+    let scanned = files
+        .iter()
+        .map(|file| (file.key.clone(), file.thread_id.as_str()))
+        .collect::<HashSet<_>>();
+    let current_key_by_thread = rows
+        .iter()
+        .map(|row| (row.id.as_str(), rollout_path_key(&row.rollout_path)))
+        .filter(|(id, key)| scanned.contains(&(key.clone(), *id)))
+        .collect::<HashMap<_, _>>();
+    let (current, superseded): (Vec<_>, Vec<_>) = files.iter().partition(|file| {
+        current_key_by_thread
+            .get(file.thread_id.as_str())
+            .is_none_or(|key| *key == file.key)
+    });
+    (current.into_iter().cloned().collect(), superseded)
+}
+
 fn has_matching_thread_row(
     file: &RolloutAuditFile,
     rows_by_key: &HashMap<PathBuf, Vec<&ThreadStateAuditRow>>,
@@ -945,6 +976,33 @@ mod tests {
         assert_detail(&check, "rollout DB missing active rows", "0");
         assert_detail(&check, "rollout DB missing archived rows", "0");
         assert_detail(&check, "rollout DB stale rows", "0");
+    }
+
+    // A session that rolled over into a new rollout file leaves the old one in
+    // place, and the thread's row names the new one. The old file is superseded,
+    // not missing from the DB, and the thread is not duplicated (cloud#762).
+    #[tokio::test]
+    async fn thread_inventory_check_ignores_a_rollout_superseded_by_its_threads_row() {
+        let fixture = Fixture::new().await;
+        let thread_id = "00000000-0000-0000-0000-000000000001";
+        fixture.write_rollout(/*archived*/ false, "2025-01-02T10-00-00", thread_id);
+        let current =
+            fixture.write_rollout(/*archived*/ false, "2025-01-02T10-40-00", thread_id);
+        fixture
+            .insert_thread_row(thread_id, current.as_path(), /*archived*/ false)
+            .await;
+
+        let check = thread_inventory_check_for_roots(
+            fixture.codex_home.path(),
+            &fixture.sqlite(),
+            "test-provider",
+        )
+        .await;
+
+        assert_eq!(check.status, CheckStatus::Ok);
+        assert_detail(&check, "rollout DB missing active rows", "0");
+        assert_detail(&check, "rollout DB duplicate rollout thread ids", "0");
+        assert_detail(&check, "rollout DB superseded files", "1");
     }
 
     #[tokio::test]
