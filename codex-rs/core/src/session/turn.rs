@@ -581,6 +581,8 @@ pub(crate) async fn run_turn(
     let mut guardian_budget_compacted = false;
     // Hanzo: a step that repeats the one before it, calls and results alike, ends the turn.
     let mut repeat = super::cycle::Repeat::default();
+    // Hanzo: a turn that ends on an announcement of its next step is asked to make the call.
+    let mut announce = super::announce::Announce::default();
     loop {
         // Note that pending_input would be something like a message the user
         // submitted through the UI while the model was running. Though the UI
@@ -707,6 +709,7 @@ pub(crate) async fn run_turn(
                     last_agent_message: sampling_request_last_agent_message,
                 } = sampling_request_output;
                 if model_needs_follow_up {
+                    announce.acted();
                     sess.input_queue
                         .accept_mailbox_delivery_for_current_turn(
                             &sess.active_turn,
@@ -847,6 +850,31 @@ pub(crate) async fn run_turn(
 
                 if !needs_follow_up {
                     last_agent_message = sampling_request_last_agent_message;
+                    if let Some(ask) = announce.ask(
+                        super::announce::applies(
+                            turn_context.config.model_provider_id.as_str(),
+                            turn_context.config.model_provider.base_url.as_deref(),
+                            &step_context.settings.model_info.slug,
+                            &turn_context.session_source,
+                            turn_context.mode(),
+                        ),
+                        last_agent_message.as_deref(),
+                        &sess.item_id_generator,
+                    ) {
+                        sess.record_response_item_and_emit_turn_item(
+                            &turn_context,
+                            &step_context.settings.model_info,
+                            ask,
+                        )
+                        .await;
+                        sess.input_queue
+                            .accept_mailbox_delivery_for_current_turn(
+                                &sess.active_turn,
+                                &turn_context.sub_id,
+                            )
+                            .await;
+                        continue;
+                    }
                     let stop_outcome = run_turn_stop_hooks(
                         &sess,
                         &step_context,
