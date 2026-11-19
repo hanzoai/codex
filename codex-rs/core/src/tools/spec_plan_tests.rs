@@ -1122,6 +1122,38 @@ async fn multiple_environments_expose_environment_selectors() {
     ));
 }
 
+/// Hanzo models get `apply_patch` as a JSON function even when their model info names no
+/// apply_patch type. dev 0.7.11 had none for enso-auto and zen6-coder, so their calls failed
+/// with `unsupported call: apply_patch` (hanzo-inc/cloud#758). Other models keep upstream's
+/// rule: no type, no tool.
+#[tokio::test]
+async fn hanzo_models_get_a_json_apply_patch_without_a_patch_type() {
+    for slug in ["enso-auto", "zen6-coder"] {
+        let plan = probe(|turn| {
+            update_turn_settings_for_test(turn, |settings| {
+                let model = Arc::make_mut(&mut settings.model_info);
+                model.slug = slug.to_string();
+                model.apply_patch_tool_type = None;
+            });
+        })
+        .await;
+        plan.assert_visible_contains(&["apply_patch"]);
+        let spec = plan.visible_spec("apply_patch");
+        assert!(matches!(spec, ToolSpec::Function(_)), "{slug}: {spec:?}");
+        assert!(has_parameter(spec, "patch"), "{slug}: {spec:?}");
+    }
+
+    let upstream = probe(|turn| {
+        update_turn_settings_for_test(turn, |settings| {
+            let model = Arc::make_mut(&mut settings.model_info);
+            model.slug = "gpt-5.5".to_string();
+            model.apply_patch_tool_type = None;
+        });
+    })
+    .await;
+    upstream.assert_visible_lacks(&["apply_patch"]);
+}
+
 #[tokio::test]
 async fn environment_tools_follow_the_step_context() {
     let (_session, mut turn) = make_session_and_context().await;

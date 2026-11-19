@@ -5,6 +5,7 @@
 //! calls out of this repository: what a binary adds (Kai, the Hanzo account)
 //! reaches the engines through the hooks codex-app-server and codex-tui offer.
 
+pub mod announce;
 pub mod catalog;
 pub mod controller;
 pub mod desktop;
