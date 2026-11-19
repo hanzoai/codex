@@ -95,6 +95,8 @@ fn classify_security_events(output: &str) -> Evidence {
     for line in output.lines().map(str::to_ascii_lowercase) {
         let contains = |values: &[&str]| values.iter().any(|value| line.contains(value));
         if !contains(&[
+            "com.hanzo.desktop",
+            "hanzo desktop.app",
             "com.openai.codex",
             "codex.app",
             "chatgpt.app",

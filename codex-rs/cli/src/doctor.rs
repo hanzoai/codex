@@ -987,7 +987,11 @@ fn installation_check(show_details: bool) -> DoctorCheck {
     let mut remediation = None;
 
     if path_entries.len() > 1 {
-        details.push(format!("PATH codex entries: {}", path_entries.len()));
+        details.push(format!(
+            "PATH {} entries: {}",
+            hanzo::desktop::BINARY,
+            path_entries.len()
+        ));
     }
     if show_details || path_entries.len() > 1 {
         details.extend(
@@ -1142,7 +1146,8 @@ fn display_list<T: AsRef<str>>(items: &[T]) -> String {
 }
 
 fn codex_path_entries() -> Vec<String> {
-    let Ok(candidates) = which::which_all("codex") else {
+    // Hanzo: Dev installs as `dev`; `codex` on PATH is another product (#763).
+    let Ok(candidates) = which::which_all(hanzo::desktop::BINARY) else {
         return Vec::new();
     };
     let mut seen = BTreeSet::new();

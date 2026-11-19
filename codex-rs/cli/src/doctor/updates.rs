@@ -16,8 +16,6 @@ use codex_install_context::InstallContext;
 use codex_install_context::InstallMethod;
 use http::Method;
 use serde::Deserialize;
-#[cfg(target_os = "macos")]
-use url::Url;
 
 use super::CheckStatus;
 use super::DoctorCheck;
@@ -34,12 +32,10 @@ const MAX_VERSION_RESPONSE_BYTES: usize = 1024 * 1024;
 
 const VERSION_FILE_NAME: &str = "version.json";
 const GITHUB_LATEST_RELEASE_URL: &str = hanzo::LATEST_RELEASE;
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-const DESKTOP_UPDATE_URL: &str = "https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml";
-#[cfg(all(target_os = "macos", not(target_arch = "x86_64")))]
-const DESKTOP_UPDATE_URL: &str = "https://persistent.oaistatic.com/codex-app-prod/appcast.xml";
+// Hanzo: Hanzo Desktop's own update feed, not the Codex app's appcast on
+// persistent.oaistatic.com or chatgpt.com (#763).
 #[cfg(target_os = "macos")]
-const BACKEND_DESKTOP_UPDATE_URL: &str = "https://chatgpt.com/backend-api/wham/app/appcast";
+const DESKTOP_UPDATE_URL: &str = hanzo::desktop::UPDATE_URL;
 #[cfg(target_os = "windows")]
 const DESKTOP_UPDATE_URL: &str =
     "https://persistent.oaistatic.com/codex-app-prod/windows-store-update.json";
@@ -218,8 +214,8 @@ pub(super) async fn append_desktop_update(
             .measured(format!("{desktop_update_display_url} {error}"))
             .expected("desktop update and runtime CDN reachable over HTTPS")
             .remedy(
-                if desktop_update_display_url.starts_with("https://chatgpt.com/") {
-                    "check proxy, firewall, DNS, and certificate access to chatgpt.com"
+                if desktop_update_display_url == hanzo::desktop::UPDATE_URL {
+                    "check proxy, firewall, DNS, and certificate access to github.com"
                 } else {
                     "check proxy, firewall, DNS, and certificate access to persistent.oaistatic.com"
                 },
@@ -229,53 +225,15 @@ pub(super) async fn append_desktop_update(
     }
 }
 
+/// Hanzo: Hanzo Desktop reads one update feed, with no per-installation backend
+/// appcast (that was the Codex app's chatgpt.com feed, #763).
 #[cfg(target_os = "macos")]
-fn macos_desktop_update_url(home: &Path, application: &InstalledApp, os_version: &str) -> String {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct ProductionAppcastState {
-        #[serde(default)]
-        backend_appcast_enabled: bool,
-        installation_id: Option<String>,
-    }
-
-    let state_path = home
-        .join("Library/Application Support")
-        .join(application.identity)
-        .join("production-appcast-bootstrap.json");
-    let Some(state) = std::fs::read(state_path)
-        .ok()
-        .and_then(|contents| serde_json::from_slice::<ProductionAppcastState>(&contents).ok())
-    else {
-        return DESKTOP_UPDATE_URL.to_string();
-    };
-    let Some(installation_id) = state
-        .backend_appcast_enabled
-        .then_some(state.installation_id)
-        .flatten()
-    else {
-        return DESKTOP_UPDATE_URL.to_string();
-    };
-
-    let Ok(mut url) = Url::parse(BACKEND_DESKTOP_UPDATE_URL) else {
-        return DESKTOP_UPDATE_URL.to_string();
-    };
-    url.query_pairs_mut().extend_pairs([
-        ("installation_id", installation_id.as_str()),
-        (
-            "arch",
-            if cfg!(target_arch = "x86_64") {
-                "x64"
-            } else {
-                "arm64"
-            },
-        ),
-        ("app_version", application.version.as_str()),
-        ("beta", "false"),
-        ("os-version", os_version),
-        ("plan_type", "unknown"),
-    ]);
-    url.to_string()
+fn macos_desktop_update_url(
+    _home: &Path,
+    _application: &InstalledApp,
+    _os_version: &str,
+) -> String {
+    DESKTOP_UPDATE_URL.to_string()
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -568,40 +526,17 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_update_probe_uses_the_persisted_production_appcast_feed() {
+    fn macos_update_probe_uses_hanzo_desktops_feed() {
         let home = tempfile::tempdir().expect("temporary home should be created");
         let application = InstalledApp {
-            identity: "com.openai.codex",
-            version: "26.623.10000".to_string(),
+            identity: hanzo::desktop::BUNDLE_ID,
+            version: "1.1.55".to_string(),
             bundle: PathBuf::new(),
-            build: 6139,
+            build: 1,
         };
         assert_eq!(
             macos_desktop_update_url(home.path(), &application, "26.6.0"),
-            DESKTOP_UPDATE_URL
-        );
-
-        let state_directory = home
-            .path()
-            .join("Library/Application Support/com.openai.codex");
-        std::fs::create_dir_all(&state_directory)
-            .expect("production appcast state directory should be created");
-        std::fs::write(
-            state_directory.join("production-appcast-bootstrap.json"),
-            r#"{"backendAppcastEnabled":true,"installationId":"028e90f8-5f2a-47db-a05c-6a48f548d728"}"#,
-        )
-        .expect("production appcast state should be created");
-
-        let arch = if cfg!(target_arch = "x86_64") {
-            "x64"
-        } else {
-            "arm64"
-        };
-        assert_eq!(
-            macos_desktop_update_url(home.path(), &application, "26.6.0"),
-            format!(
-                "{BACKEND_DESKTOP_UPDATE_URL}?installation_id=028e90f8-5f2a-47db-a05c-6a48f548d728&arch={arch}&app_version=26.623.10000&beta=false&os-version=26.6.0&plan_type=unknown"
-            )
+            hanzo::desktop::UPDATE_URL
         );
     }
 

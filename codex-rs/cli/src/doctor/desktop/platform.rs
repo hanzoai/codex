@@ -218,13 +218,9 @@ fn installed_windows_app() -> Result<Option<InstalledApp>, DiscoveryError> {
 
 #[cfg(target_os = "macos")]
 async fn installed_macos_app() -> Result<Option<InstalledApp>, DiscoveryError> {
-    let applications = std::iter::once(PathBuf::from("/Applications"))
-        .chain(std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Applications")))
-        .flat_map(|directory| {
-            ["ChatGPT.app", "Codex.app"]
-                .into_iter()
-                .map(move |application| directory.join(application))
-        });
+    // Hanzo: the desktop app is Hanzo Desktop, not ChatGPT.app or Codex.app (#763).
+    let applications =
+        hanzo::desktop::macos_bundles(std::env::var_os("HOME").map(PathBuf::from).as_deref());
 
     for bundle in applications {
         match fs::metadata(&bundle) {
@@ -260,7 +256,8 @@ pub(in crate::doctor) async fn inspect_macos_bundle(
         return Err(DiscoveryError);
     }
     let metadata: Value = serde_json::from_slice(&output.stdout).map_err(|_| DiscoveryError)?;
-    if metadata.get("CFBundleIdentifier").and_then(Value::as_str) != Some("com.openai.codex") {
+    if metadata.get("CFBundleIdentifier").and_then(Value::as_str) != Some(hanzo::desktop::BUNDLE_ID)
+    {
         return Ok(None);
     }
     let version = metadata
@@ -268,14 +265,16 @@ pub(in crate::doctor) async fn inspect_macos_bundle(
         .or_else(|| metadata.get("CFBundleVersion"))
         .and_then(Value::as_str)
         .ok_or(DiscoveryError)?;
+    // Hanzo: Hanzo Desktop (Tauri) writes a dotted CFBundleVersion ("1.1.55"), not
+    // Sparkle's integer build, so an unparsable build is 0 rather than an error.
     let build = metadata
         .get("CFBundleVersion")
         .and_then(Value::as_str)
         .and_then(|value| value.parse().ok())
-        .ok_or(DiscoveryError)?;
+        .unwrap_or(0);
 
     Ok(Some(InstalledApp {
-        identity: "com.openai.codex",
+        identity: hanzo::desktop::BUNDLE_ID,
         version: version.to_string(),
         bundle: bundle.to_path_buf(),
         build,
