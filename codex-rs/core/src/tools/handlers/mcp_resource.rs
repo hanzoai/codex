@@ -37,6 +37,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
 use codex_protocol::protocol::McpInvocation;
+use futures::future::BoxFuture;
 
 mod list_mcp_resource_templates;
 mod list_mcp_resources;
@@ -75,7 +76,13 @@ fn resource_environments(
     let arguments = resource_arguments(&invocation.payload)?;
     let server = match operation {
         ResourceOperation::List => ListResourceArgs::parse(arguments)?.server,
-        ResourceOperation::Read => Some(ReadResourceArgs::parse(arguments)?.server),
+        // A read without a server is resolved by `read_resource_environments`, which
+        // can ask the servers; here there is nothing to ask.
+        ResourceOperation::Read => Some(
+            ReadResourceArgs::parse(arguments)?
+                .server
+                .ok_or_else(|| FunctionCallError::RespondToModel(READ_NEEDS_SERVER.to_string()))?,
+        ),
     };
     // Only an aggregate list has no owning server. A named but unknown server is an error.
     let Some(server) = server else {
@@ -84,7 +91,37 @@ fn resource_environments(
             owner: None,
         });
     };
-    let step = &invocation.step_context;
+    server_environments(&invocation.step_context, server)
+}
+
+/// The environments of a read: the server it names, or else the one server that can
+/// answer for its URI. Resolved before PreToolUse and Guardian see the call, so both
+/// see the server the read goes to, and the handler reads from that same server.
+fn read_resource_environments(
+    invocation: &ToolInvocation,
+) -> BoxFuture<'_, Result<ToolEnvironments, FunctionCallError>> {
+    Box::pin(async move {
+        let args = ReadResourceArgs::parse(resource_arguments(&invocation.payload)?)?;
+        let step = &invocation.step_context;
+        let server = match args.server {
+            Some(server) => server,
+            None => {
+                let turn = &step.turn;
+                let listing = step
+                    .mcp
+                    .list_all_resources(|server| model_can_access_mcp_server(turn, server))
+                    .await;
+                resource_server_for(&args.uri, &listing)?
+            }
+        };
+        server_environments(step, server)
+    })
+}
+
+fn server_environments(
+    step: &StepContext,
+    server: String,
+) -> Result<ToolEnvironments, FunctionCallError> {
     ensure_model_can_access_mcp_server(&step.turn, &server)?;
     let environment_id = step.mcp.server_environment_id(&server).ok_or_else(|| {
         FunctionCallError::RespondToModel(format!("unknown MCP server '{server}'"))
@@ -93,6 +130,48 @@ fn resource_environments(
         server: Some(server),
         owner: Some(environment_id.to_owned()),
     })
+}
+
+const READ_NEEDS_SERVER: &str =
+    "read_mcp_resource needs `server`: the MCP server name from list_mcp_resources";
+
+/// The server a read that named none goes to: the one server listing `uri`, or, when
+/// none lists it, the only server there is. Anything else is the model's to choose,
+/// and the answer names the servers it can choose from.
+fn resource_server_for(
+    uri: &str,
+    listing: &McpResourceListing<Resource>,
+) -> Result<String, FunctionCallError> {
+    let mut owners: Vec<&str> = listing
+        .by_server
+        .iter()
+        .filter(|(_, resources)| resources.iter().any(|resource| resource.uri == uri))
+        .map(|(server, _)| server.as_str())
+        .collect();
+    owners.sort_unstable();
+    let mut servers: Vec<&str> = listing
+        .by_server
+        .keys()
+        .chain(&listing.deferred_servers)
+        .map(String::as_str)
+        .collect();
+    servers.sort_unstable();
+    servers.dedup();
+    match (owners.as_slice(), servers.as_slice()) {
+        ([owner], _) => Ok((*owner).to_string()),
+        ([], [only]) => Ok((*only).to_string()),
+        ([], []) => Err(FunctionCallError::RespondToModel(format!(
+            "{READ_NEEDS_SERVER}; no MCP server is serving resources"
+        ))),
+        ([], servers) => Err(FunctionCallError::RespondToModel(format!(
+            "{READ_NEEDS_SERVER}; no server lists `{uri}`, so pass one of: {}",
+            servers.join(", ")
+        ))),
+        (owners, _) => Err(FunctionCallError::RespondToModel(format!(
+            "{READ_NEEDS_SERVER}; `{uri}` is listed by {}",
+            owners.join(", ")
+        ))),
+    }
 }
 
 fn resource_arguments(payload: &ToolPayload) -> Result<Option<Value>, FunctionCallError> {
@@ -145,9 +224,11 @@ impl ListResourceArgs {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 struct ReadResourceArgs {
-    server: String,
+    /// Absent or blank when the model left the server out; see `read_resource_environments`.
+    #[serde(default)]
+    server: Option<String>,
     uri: String,
 }
 
@@ -155,7 +236,7 @@ impl ReadResourceArgs {
     fn parse(arguments: Option<Value>) -> Result<Self, FunctionCallError> {
         let Self { server, uri } = parse_args(arguments)?;
         Ok(Self {
-            server: normalize_required_string("server", server)?,
+            server: normalize_optional_string(server),
             uri: normalize_required_string("uri", uri)?,
         })
     }

@@ -3,6 +3,7 @@ use crate::tools::context::ToolEnvironments;
 use crate::tools::context::ToolInvocation;
 use crate::tools::handlers::mcp_resource_spec::create_read_mcp_resource_tool;
 use crate::tools::registry::CoreToolRuntime;
+use crate::tools::registry::LiveEnvironmentResolver;
 use crate::tools::registry::ToolExecutor;
 use codex_protocol::openai_models::ToolMessage;
 use codex_protocol::protocol::McpInvocation;
@@ -11,10 +12,12 @@ use codex_tools::ToolSpec;
 
 use rmcp::model::ReadResourceRequestParams;
 
+use super::READ_NEEDS_SERVER;
 use super::ReadResourceArgs;
 use super::ReadResourcePayload;
 use super::ResourceOperation;
 use super::ensure_model_can_access_mcp_server;
+use super::read_resource_environments;
 use super::resource_arguments;
 use super::resource_environments;
 use super::run_resource_operation;
@@ -60,6 +63,7 @@ impl ReadMcpResourceHandler {
             step_context,
             call_id,
             payload,
+            environments,
             ..
         } = invocation;
         let turn = std::sync::Arc::clone(&step_context.turn);
@@ -67,6 +71,16 @@ impl ReadMcpResourceHandler {
 
         let arguments = resource_arguments(&payload)?;
         let ReadResourceArgs { server, uri } = ReadResourceArgs::parse(arguments.clone())?;
+        // The server the environments were resolved to is the one PreToolUse and
+        // Guardian saw, including one inferred for a read that named none.
+        let server = match environments {
+            ToolEnvironments::Mcp {
+                server: Some(server),
+                ..
+            } => server,
+            _ => server
+                .ok_or_else(|| FunctionCallError::RespondToModel(READ_NEEDS_SERVER.to_string()))?,
+        };
 
         let invocation = McpInvocation {
             server: server.clone(),
@@ -99,5 +113,9 @@ impl CoreToolRuntime for ReadMcpResourceHandler {
         invocation: &ToolInvocation,
     ) -> Result<ToolEnvironments, FunctionCallError> {
         resource_environments(invocation, ResourceOperation::Read)
+    }
+
+    fn live_environment_resolver(&self) -> Option<LiveEnvironmentResolver> {
+        Some(read_resource_environments)
     }
 }

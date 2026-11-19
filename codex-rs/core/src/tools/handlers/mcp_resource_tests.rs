@@ -186,3 +186,118 @@ fn serialize_function_output_caps_read_resource_payload() {
     assert_ne!(output, serialized);
     assert_eq!(output, expected);
 }
+
+/// hanzo-inc/cloud#781: a model that left `server` out of `read_mcp_resource` got
+/// `failed to parse function arguments: missing field `server`` from the router.
+#[test]
+fn read_resource_args_take_the_server_as_optional() {
+    assert_eq!(
+        ReadResourceArgs::parse(Some(json!({"uri": " memo://id "}))).expect("parse without server"),
+        ReadResourceArgs {
+            server: None,
+            uri: "memo://id".to_string(),
+        }
+    );
+    assert_eq!(
+        ReadResourceArgs::parse(Some(json!({"server": "  ", "uri": "memo://id"})))
+            .expect("parse blank server")
+            .server,
+        None
+    );
+    assert_eq!(
+        ReadResourceArgs::parse(Some(json!({"server": " srv ", "uri": "memo://id"})))
+            .expect("parse with server")
+            .server,
+        Some("srv".to_string())
+    );
+    assert!(ReadResourceArgs::parse(Some(json!({"server": "srv"}))).is_err());
+}
+
+fn listing(
+    by_server: &[(&str, &[&str])],
+    deferred_servers: &[&str],
+) -> McpResourceListing<Resource> {
+    McpResourceListing {
+        by_server: by_server
+            .iter()
+            .map(|(server, uris)| {
+                let resources = uris.iter().map(|uri| resource(uri, uri)).collect();
+                (server.to_string(), resources)
+            })
+            .collect(),
+        deferred_servers: deferred_servers.iter().map(ToString::to_string).collect(),
+    }
+}
+
+fn refusal(result: Result<String, FunctionCallError>) -> String {
+    match result {
+        Err(FunctionCallError::RespondToModel(message)) => message,
+        other => panic!("expected a refusal to the model, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_read_without_a_server_goes_to_the_server_listing_its_uri() {
+    let servers = listing(
+        &[
+            ("cloud", &["cloud://a"]),
+            ("hanzo", &["hanzo://kit", "hanzo://b"]),
+        ],
+        &["slow"],
+    );
+    assert_eq!(
+        resource_server_for("hanzo://kit", &servers).expect("one owner"),
+        "hanzo"
+    );
+}
+
+#[test]
+fn a_read_without_a_server_goes_to_the_only_server() {
+    let servers = listing(&[("hanzo", &[])], &[]);
+    assert_eq!(
+        resource_server_for("hanzo://from-a-template", &servers).expect("only server"),
+        "hanzo"
+    );
+}
+
+#[test]
+fn a_read_the_servers_cannot_settle_names_the_choices() {
+    let unlisted = refusal(resource_server_for(
+        "memo://nowhere",
+        &listing(&[("hanzo", &[]), ("cloud", &[])], &["slow"]),
+    ));
+    assert!(unlisted.contains("needs `server`"), "{unlisted}");
+    assert!(
+        unlisted.contains("no server lists `memo://nowhere`, so pass one of: cloud, hanzo, slow"),
+        "{unlisted}"
+    );
+
+    let shared = refusal(resource_server_for(
+        "memo://both",
+        &listing(
+            &[("beta", &["memo://both"]), ("alpha", &["memo://both"])],
+            &[],
+        ),
+    ));
+    assert!(
+        shared.contains("`memo://both` is listed by alpha, beta"),
+        "{shared}"
+    );
+
+    let none = refusal(resource_server_for("memo://x", &listing(&[], &[])));
+    assert!(
+        none.contains("no MCP server is serving resources"),
+        "{none}"
+    );
+}
+
+/// A server that only deferred its listing could still own the URI, so a single ready
+/// server is not "the only server" while another is still starting.
+#[test]
+fn a_starting_server_keeps_a_read_from_being_guessed() {
+    let message = refusal(resource_server_for(
+        "memo://x",
+        &listing(&[("hanzo", &[])], &["cloud"]),
+    ));
+    assert!(message.contains("pass one of: cloud, hanzo"), "{message}");
+}
