@@ -1623,7 +1623,10 @@ impl Session {
     #[instrument(name = "session.flush_rollout", level = "trace", skip_all)]
     pub(crate) async fn flush_rollout(&self) -> std::io::Result<()> {
         if let Some(live_thread) = self.live_thread() {
-            live_thread.flush().await.map_err(std::io::Error::other)
+            match live_thread.flush().await {
+                Ok(()) | Err(codex_thread_store::ThreadStoreError::ThreadNotFound { .. }) => Ok(()),
+                Err(e) => Err(std::io::Error::other(e)),
+            }
         } else {
             Ok(())
         }
@@ -5409,7 +5412,11 @@ impl Session {
         if let Some(live_thread) = self.live_thread()
             && let Err(e) = live_thread.append_items(items).await
         {
-            error!("failed to record rollout items: {e:#}");
+            if matches!(e, codex_thread_store::ThreadStoreError::ThreadNotFound { .. }) {
+                debug!("skipping rollout append after thread recorder closed: {e:#}");
+            } else {
+                error!("failed to record rollout items: {e:#}");
+            }
             return false;
         }
         true
