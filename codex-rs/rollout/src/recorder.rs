@@ -12,6 +12,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use chrono::SecondsFormat;
 use codex_protocol::RolloutId;
@@ -150,6 +152,7 @@ struct RolloutWriterTask {
     _writer_lock: Option<Arc<crate::WriterLockGuard>>,
     handle: Mutex<Option<JoinHandle<()>>>,
     terminal_failure: Mutex<Option<Arc<IoError>>>,
+    shut_down: AtomicBool,
 }
 
 impl RolloutWriterTask {
@@ -159,7 +162,16 @@ impl RolloutWriterTask {
             _writer_lock: writer_lock,
             handle: Mutex::new(None),
             terminal_failure: Mutex::new(None),
+            shut_down: AtomicBool::new(false),
         }
+    }
+
+    fn mark_shut_down(&self) {
+        self.shut_down.store(true, Ordering::Release);
+    }
+
+    fn is_shut_down(&self) -> bool {
+        self.shut_down.load(Ordering::Acquire)
     }
 
     /// Store the spawned task handle so it remains owned for the lifetime of recorder clones.
@@ -1046,16 +1058,21 @@ impl RolloutRecorder {
         let rollout_path_for_spawn = rollout_path.clone();
         let handle = tokio::task::spawn(async move {
             let result = rollout_writer(state, rx).await;
-            if let Err(err) = result {
-                // This is the terminal background-task failure path. Normal I/O failures stay inside
-                // `rollout_writer`, are reported through command acks, and leave items buffered for retry.
-                error!(
-                    "rollout writer task failed for {}: {err}; error_kind={:?}; raw_os_error={:?}",
-                    rollout_path_for_spawn.display(),
-                    err.kind(),
-                    err.raw_os_error()
-                );
-                writer_task_for_spawn.mark_failed(&err);
+            match result {
+                Ok(()) => {
+                    writer_task_for_spawn.mark_shut_down();
+                }
+                Err(err) => {
+                    // This is the terminal background-task failure path. Normal I/O failures stay inside
+                    // `rollout_writer`, are reported through command acks, and leave items buffered for retry.
+                    error!(
+                        "rollout writer task failed for {}: {err}; error_kind={:?}; raw_os_error={:?}",
+                        rollout_path_for_spawn.display(),
+                        err.kind(),
+                        err.raw_os_error()
+                    );
+                    writer_task_for_spawn.mark_failed(&err);
+                }
             }
         });
         writer_task.set_handle(handle);
@@ -1229,15 +1246,31 @@ impl RolloutRecorder {
     /// Drain pending items before stopping the writer task.
     ///
     /// If draining fails, the writer stays alive so callers can continue retrying flush/shutdown.
+    /// Repeated shutdown calls after a clean shutdown are idempotent.
     pub async fn shutdown(&self) -> std::io::Result<()> {
+        if self.writer_task.is_shut_down() {
+            return self.wait_for_exit().await;
+        }
         let (tx_done, rx_done) = oneshot::channel();
         match self.tx.send(RolloutCmd::Shutdown { ack: tx_done }).await {
-            Ok(_) => rx_done.await.map_err(|e| {
-                self.writer_task.terminal_failure().unwrap_or_else(|| {
-                    IoError::other(format!("failed waiting for rollout shutdown: {e}"))
-                })
-            })??,
+            Ok(_) => match rx_done.await {
+                Ok(Ok(())) => {
+                    self.writer_task.mark_shut_down();
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(e) => {
+                    if self.writer_task.is_shut_down() {
+                        return self.wait_for_exit().await;
+                    }
+                    return Err(self.writer_task.terminal_failure().unwrap_or_else(|| {
+                        IoError::other(format!("failed waiting for rollout shutdown: {e}"))
+                    }));
+                }
+            },
             Err(e) => {
+                if self.writer_task.is_shut_down() {
+                    return self.wait_for_exit().await;
+                }
                 if let Some(err) = self.writer_task.terminal_failure() {
                     warn!(
                         "failed to send rollout shutdown command because writer task failed: {err}"
@@ -1255,10 +1288,14 @@ impl RolloutRecorder {
 
     /// Stops the writer without materializing deferred items, after already-running IO completes.
     pub async fn discard(&self) -> std::io::Result<()> {
+        if self.writer_task.is_shut_down() {
+            return self.wait_for_exit().await;
+        }
         let (ack, done) = oneshot::channel();
         if self.tx.send(RolloutCmd::Discard { ack }).await.is_ok() {
             let _ = done.await;
         }
+        self.writer_task.mark_shut_down();
         self.wait_for_exit().await
     }
 

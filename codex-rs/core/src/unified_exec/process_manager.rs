@@ -606,7 +606,8 @@ impl UnifiedExecProcessManager {
             } else {
                 None
             };
-        start_streaming_output(&process, context);
+        let streaming_handle = start_streaming_output(&process, context);
+        self.track_watcher(streaming_handle).await;
         let start = Instant::now();
         // Persist live sessions and remote output that remains pollable after an early exit.
         let process_stored = (!process.has_exited() && process.exit_code().is_none())
@@ -1283,7 +1284,7 @@ impl UnifiedExecProcessManager {
             store.processes.insert(process_id, entry);
             pruned_entry
         };
-        spawn_exit_watcher(
+        let exit_watcher_handle = spawn_exit_watcher(
             Arc::clone(&process),
             context,
             command.to_vec(),
@@ -1295,6 +1296,7 @@ impl UnifiedExecProcessManager {
             network_denial_monitor,
             plugin_metrics_sidecar,
         );
+        self.track_watcher(exit_watcher_handle).await;
         // Install the watcher before cancellable cleanup, and outside the process-store lock.
         if let Some(pruned_entry) = pruned_entry {
             unregister_network_approval_for_entry(&pruned_entry).await;
@@ -1789,6 +1791,12 @@ impl UnifiedExecProcessManager {
             .map(|(process_id, _, _)| process_id)
     }
 
+    pub(super) async fn track_watcher(&self, handle: tokio::task::JoinHandle<()>) {
+        let mut handles = self.watcher_handles.lock().await;
+        handles.retain(|existing| !existing.is_finished());
+        handles.push(handle);
+    }
+
     pub(crate) async fn terminate_all_processes(&self) {
         let entries: Vec<ProcessEntry> = {
             let mut processes = self.process_store.lock().await;
@@ -1804,6 +1812,30 @@ impl UnifiedExecProcessManager {
         for entry in entries {
             unregister_network_approval_for_entry(&entry).await;
             entry.process.terminate();
+        }
+
+        // Wait for streaming output and exit watchers to flush terminal tool events into
+        // the session before live thread persistence is shut down.
+        let watchers: Vec<tokio::task::JoinHandle<()>> = {
+            let mut handles = self.watcher_handles.lock().await;
+            std::mem::take(&mut *handles)
+        };
+        if !watchers.is_empty() {
+            const SHUTDOWN_WATCHER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+            let deadline = tokio::time::Instant::now() + SHUTDOWN_WATCHER_DRAIN_TIMEOUT;
+            for mut handle in watchers {
+                if handle.is_finished() {
+                    let _ = handle.await;
+                    continue;
+                }
+                if tokio::time::timeout_at(deadline, &mut handle)
+                    .await
+                    .is_err()
+                {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+            }
         }
     }
 

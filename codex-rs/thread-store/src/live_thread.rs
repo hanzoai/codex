@@ -1,6 +1,8 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -10,6 +12,7 @@ use codex_rollout::RolloutPersistenceTelemetry;
 use codex_rollout::measure_and_filter_rollout_items;
 use codex_rollout::persisted_rollout_items;
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::AppendThreadItemsParams;
@@ -30,6 +33,13 @@ use crate::ThreadStoreResumePreparation;
 use crate::UpdateThreadMetadataParams;
 use crate::thread_metadata_sync::ThreadMetadataSync;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum LiveThreadLifecycle {
+    #[default]
+    Active,
+    Closed,
+}
+
 /// Handle for an active thread's persistence lifecycle.
 ///
 /// `LiveThread` keeps lifecycle decisions with the caller while delegating storage details to
@@ -42,6 +52,8 @@ pub struct LiveThread {
     thread_store: Arc<dyn ThreadStore>,
     metadata_sync: Arc<Mutex<ThreadMetadataSync>>,
     persistence_telemetry: RolloutPersistenceTelemetry,
+    lifecycle: Arc<RwLock<LiveThreadLifecycle>>,
+    closed: Arc<AtomicBool>,
 }
 
 /// Owns persistence acquisition and its live thread while initialization is still fallible.
@@ -155,6 +167,8 @@ impl LiveThread {
             thread_store,
             metadata_sync: Arc::new(Mutex::new(metadata_sync)),
             persistence_telemetry: RolloutPersistenceTelemetry::new(thread_id),
+            lifecycle: Arc::new(RwLock::new(LiveThreadLifecycle::Active)),
+            closed: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -225,9 +239,16 @@ impl LiveThread {
                 thread_store,
                 metadata_sync: Arc::new(Mutex::new(metadata_sync)),
                 persistence_telemetry: RolloutPersistenceTelemetry::new(thread_id),
+                lifecycle: Arc::new(RwLock::new(LiveThreadLifecycle::Active)),
+                closed: Arc::new(AtomicBool::new(false)),
             },
             history,
         ))
+    }
+
+    /// Returns `true` once this handle has completed shutdown or discard.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 
     #[tracing::instrument(
@@ -236,6 +257,12 @@ impl LiveThread {
         fields(item_count = raw_items.len())
     )]
     pub async fn append_items(&self, raw_items: &[RolloutItem]) -> ThreadStoreResult<()> {
+        let lifecycle = self.lifecycle.read().await;
+        if *lifecycle == LiveThreadLifecycle::Closed {
+            return Err(ThreadStoreError::ThreadNotFound {
+                thread_id: self.thread_id,
+            });
+        }
         let items = self.persist_appended_items(raw_items).await?;
         if items.is_empty() {
             return Ok(());
@@ -290,6 +317,10 @@ impl LiveThread {
     }
 
     pub async fn persist(&self, context: PersistContext) -> ThreadStoreResult<()> {
+        let lifecycle = self.lifecycle.read().await;
+        if *lifecycle == LiveThreadLifecycle::Closed {
+            return Ok(());
+        }
         if context.allows_background_persistence() {
             let update = self
                 .metadata_sync
@@ -306,16 +337,38 @@ impl LiveThread {
     }
 
     pub async fn flush(&self) -> ThreadStoreResult<()> {
+        let lifecycle = self.lifecycle.read().await;
+        if *lifecycle == LiveThreadLifecycle::Closed {
+            return Ok(());
+        }
         self.thread_store.flush_thread(self.thread_id).await?;
         self.flush_pending_metadata_update_for_existing_history()
             .await
     }
 
     pub async fn shutdown(&self) -> ThreadStoreResult<()> {
+        // Hold the write lock so every in-flight append/flush/persist finishes before the live
+        // writer is closed and removed from the backing store.
+        let mut lifecycle = self.lifecycle.write().await;
+        if *lifecycle == LiveThreadLifecycle::Closed {
+            return Ok(());
+        }
         let metadata_result = self
             .flush_pending_metadata_update_for_existing_history()
             .await;
-        let shutdown_result = self.thread_store.shutdown_thread(self.thread_id).await;
+        let raw_shutdown_result = self.thread_store.shutdown_thread(self.thread_id).await;
+        let shutdown_result = match raw_shutdown_result {
+            Ok(()) | Err(ThreadStoreError::ThreadNotFound { .. }) => {
+                *lifecycle = LiveThreadLifecycle::Closed;
+                self.closed.store(true, Ordering::Release);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        };
+        let metadata_result = match metadata_result {
+            Err(ThreadStoreError::ThreadNotFound { .. }) if shutdown_result.is_ok() => Ok(()),
+            other => other,
+        };
         match (metadata_result, shutdown_result) {
             (Err(metadata_error), Err(shutdown_error)) => Err(ThreadStoreError::Internal {
                 message: format!(
@@ -328,7 +381,18 @@ impl LiveThread {
     }
 
     pub async fn discard(&self) -> ThreadStoreResult<()> {
-        self.thread_store.discard_thread(self.thread_id).await
+        let mut lifecycle = self.lifecycle.write().await;
+        if *lifecycle == LiveThreadLifecycle::Closed {
+            return Ok(());
+        }
+        match self.thread_store.discard_thread(self.thread_id).await {
+            Ok(()) | Err(ThreadStoreError::ThreadNotFound { .. }) => {
+                *lifecycle = LiveThreadLifecycle::Closed;
+                self.closed.store(true, Ordering::Release);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub async fn load_history(
