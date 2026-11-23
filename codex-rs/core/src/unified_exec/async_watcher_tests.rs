@@ -420,3 +420,132 @@ async fn streaming_output_bounds_invalid_bytes() {
         ]
     );
 }
+
+#[tokio::test]
+async fn terminate_all_processes_drains_exit_watcher_before_live_thread_shutdown()
+-> anyhow::Result<()> {
+    let (mut session, turn) = crate::session::tests::make_session_and_context().await;
+    let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());
+    let thread_store: Arc<dyn codex_thread_store::ThreadStore> = store.clone();
+    let config = session.get_config().await;
+    let live_thread = codex_thread_store::LiveThread::create(
+        Arc::clone(&thread_store),
+        codex_thread_store::CreateThreadParams {
+            attached_thread: false,
+            creator_user_id: None,
+            creator_account_id: None,
+            session_id: session.session_id(),
+            thread_id: session.thread_id,
+            extra_config: None,
+            forked_from_id: None,
+            parent_thread_id: None,
+            source: codex_protocol::protocol::SessionSource::Exec,
+            thread_source: None,
+            originator: "test_originator".to_string(),
+            base_instructions: codex_protocol::models::BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            selected_capability_roots: Vec::new(),
+            multi_agent_version: None,
+            history_mode: codex_protocol::protocol::ThreadHistoryMode::Paginated,
+            subagent_history_start_ordinal: None,
+            history_base: None,
+            initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
+            runtime_workspace_roots: None,
+            metadata: codex_thread_store::ThreadPersistenceMetadata {
+                cwd: Some(config.cwd.to_path_buf()),
+                model_provider: config.model_provider_id.clone(),
+                memory_mode: codex_protocol::protocol::ThreadMemoryMode::Disabled,
+            },
+        },
+    )
+    .await?;
+    session.services.thread_store = thread_store;
+    session.services.live_thread = Some(live_thread);
+    let session = Arc::new(session);
+
+    let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    let (stdout_tx, stdout_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(8);
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<i32>();
+    let exit_tx = Arc::new(std::sync::Mutex::new(Some(exit_tx)));
+    let exit_tx_for_term = Arc::clone(&exit_tx);
+    let spawned = codex_utils_pty::spawn_from_driver(codex_utils_pty::ProcessDriver {
+        writer_tx,
+        stdout_rx,
+        stderr_rx: None,
+        exit_rx,
+        terminator: Some(Box::new(move || {
+            if let Some(tx) = exit_tx_for_term
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                let _ = tx.send(-1);
+            }
+        })),
+        writer_handle: None,
+        resizer: None,
+        #[cfg(windows)]
+        tty: false,
+    });
+    let process = Arc::new(UnifiedExecProcess::from_spawned(spawned, SandboxType::None).await?);
+    let output_buffer = Arc::clone(&process.output_handles().output_buffer);
+    let turn = Arc::new(turn);
+    let context = UnifiedExecContext::new(
+        Arc::clone(&session),
+        crate::session::step_context::StepContext::for_test(Arc::clone(&turn)),
+        tokio_util::sync::CancellationToken::new(),
+        "shutdown-drain-test".to_string(),
+    );
+
+    let stream_handle = start_streaming_output(&process, &context);
+    session
+        .services
+        .unified_exec_manager
+        .track_watcher(stream_handle)
+        .await;
+    #[allow(deprecated)]
+    let cwd = turn.cwd.clone().into();
+    let exit_handle = spawn_exit_watcher(
+        Arc::clone(&process),
+        &context,
+        vec!["sleep".to_string(), "10".to_string()],
+        cwd,
+        /*process_id*/ 4242,
+        /*plugin_attribution*/ None,
+        output_buffer,
+        Instant::now(),
+        /*network_denial_monitor*/ None,
+        /*plugin_metrics_sidecar*/ None,
+    );
+    session
+        .services
+        .unified_exec_manager
+        .track_watcher(exit_handle)
+        .await;
+
+    // Terminate via the process handle right as shutdown starts, keeping stdout_tx open so
+    // start_streaming_output hits TRAILING_OUTPUT_GRACE before notifying output_drained.
+    process.terminate();
+    let _keep_stdout_open = stdout_tx;
+
+    // Session shutdown runs `terminate_all_processes()` before `live_thread.shutdown()`.
+    // `terminate_all_processes()` must drain the watchers before returning so ExecCommandEnd
+    // persists while the thread is still open instead of racing into ThreadNotFound.
+    session
+        .services
+        .unified_exec_manager
+        .terminate_all_processes()
+        .await;
+    session
+        .live_thread()
+        .expect("live thread attached")
+        .shutdown()
+        .await?;
+    let calls = store.calls().await;
+    assert_eq!(calls.shutdown_thread, 1);
+    assert!(
+        calls.append_items >= 1,
+        "expected exit watcher event to be persisted before live_thread shutdown, got {calls:?}"
+    );
+    Ok(())
+}

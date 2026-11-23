@@ -8805,6 +8805,222 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
     );
 }
 
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn late_rollout_write_after_shutdown_skips_store_and_emits_no_error() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    struct ErrorCounter(Arc<AtomicUsize>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ErrorCounter {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() == tracing::Level::ERROR {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    let error_count = Arc::new(AtomicUsize::new(0));
+    let subscriber =
+        tracing_subscriber::Registry::default().with(ErrorCounter(Arc::clone(&error_count)));
+
+    async {
+        let (mut session, _turn_context) = make_session_and_context().await;
+        let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());
+        let thread_store: Arc<dyn codex_thread_store::ThreadStore> = store.clone();
+        let config = session.get_config().await;
+        let live_thread = LiveThread::create(
+            Arc::clone(&thread_store),
+            CreateThreadParams {
+                attached_thread: false,
+                creator_user_id: None,
+                creator_account_id: None,
+                session_id: session.session_id(),
+                thread_id: session.thread_id,
+                extra_config: None,
+                forked_from_id: None,
+                parent_thread_id: None,
+                source: SessionSource::Exec,
+                thread_source: None,
+                originator: "test_originator".to_string(),
+                base_instructions: BaseInstructions::default(),
+                dynamic_tools: Vec::new(),
+                selected_capability_roots: Vec::new(),
+                multi_agent_version: None,
+                history_mode: Default::default(),
+                subagent_history_start_ordinal: None,
+                history_base: None,
+                initial_window_id: ContextWindowId::new_uuid_v7(),
+                runtime_workspace_roots: None,
+                metadata: ThreadPersistenceMetadata {
+                    cwd: Some(config.cwd.to_path_buf()),
+                    model_provider: config.model_provider_id.clone(),
+                    memory_mode: ThreadMemoryMode::Disabled,
+                },
+            },
+        )
+        .await
+        .expect("create thread persistence");
+        session.services.thread_store = thread_store;
+        session.services.live_thread = Some(live_thread);
+        let session = Arc::new(session);
+
+        assert!(handlers::shutdown(&session, "sub-1".to_string()).await);
+
+        // Late writes, flushes, and duplicate shutdown after teardown must be non-fatal and silent at ERROR.
+        let persisted = session
+            .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
+                UserMessageEvent {
+                    client_id: None,
+                    message: "late-after-shutdown".to_string(),
+                    images: None,
+                    local_images: Vec::new(),
+                    text_elements: Vec::new(),
+                    ..Default::default()
+                },
+            ))])
+            .await;
+        assert!(!persisted);
+        session
+            .flush_rollout()
+            .await
+            .expect("post-shutdown flush must succeed");
+        assert!(handlers::shutdown(&session, "sub-2".to_string()).await);
+
+        assert_eq!(
+            codex_thread_store::InMemoryThreadStoreCalls {
+                create_thread: 1,
+                shutdown_thread: 1,
+                ..Default::default()
+            },
+            store.calls().await
+        );
+    }
+    .with_subscriber(subscriber)
+    .await;
+
+    assert_eq!(
+        error_count.load(Ordering::SeqCst),
+        0,
+        "post-shutdown rollout recording must not emit ERROR logs"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn persist_rollout_items_when_thread_gone_is_non_fatal_and_not_error() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    struct ErrorCounter(Arc<AtomicUsize>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ErrorCounter {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() == tracing::Level::ERROR {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    let error_count = Arc::new(AtomicUsize::new(0));
+    let subscriber =
+        tracing_subscriber::Registry::default().with(ErrorCounter(Arc::clone(&error_count)));
+
+    async {
+        let (mut session, _turn_context) = make_session_and_context().await;
+        let codex_home = tempfile::TempDir::new().expect("temp codex home");
+        let config = session.get_config().await;
+        let abs_codex_home =
+            codex_utils_absolute_path::AbsolutePathBuf::try_from(codex_home.path().to_path_buf())
+                .expect("absolute codex home");
+        let store = Arc::new(codex_thread_store::LocalThreadStore::new(
+            codex_thread_store::LocalThreadStoreConfig {
+                codex_home: codex_home.path().to_path_buf(),
+                sqlite: codex_state::SqliteConfig::new_for_testing(abs_codex_home),
+                default_model_provider_id: config.model_provider_id.clone(),
+            },
+            /*state_db*/ None,
+        ));
+        let thread_store: Arc<dyn codex_thread_store::ThreadStore> = store;
+        let live_thread = LiveThread::create(
+            Arc::clone(&thread_store),
+            CreateThreadParams {
+                attached_thread: false,
+                creator_user_id: None,
+                creator_account_id: None,
+                session_id: session.session_id(),
+                thread_id: session.thread_id,
+                extra_config: None,
+                forked_from_id: None,
+                parent_thread_id: None,
+                source: SessionSource::Exec,
+                thread_source: None,
+                originator: "test_originator".to_string(),
+                base_instructions: BaseInstructions::default(),
+                dynamic_tools: Vec::new(),
+                selected_capability_roots: Vec::new(),
+                multi_agent_version: None,
+                history_mode: Default::default(),
+                subagent_history_start_ordinal: None,
+                history_base: None,
+                initial_window_id: ContextWindowId::new_uuid_v7(),
+                runtime_workspace_roots: None,
+                metadata: ThreadPersistenceMetadata {
+                    cwd: Some(config.cwd.to_path_buf()),
+                    model_provider: config.model_provider_id.clone(),
+                    memory_mode: ThreadMemoryMode::Disabled,
+                },
+            },
+        )
+        .await
+        .expect("create thread persistence");
+        session.services.thread_store = Arc::clone(&thread_store);
+        session.services.live_thread = Some(live_thread);
+        let session = Arc::new(session);
+
+        // Simulate external teardown removing the local thread writer out from under the live handle.
+        thread_store
+            .discard_thread(session.thread_id)
+            .await
+            .expect("discard thread externally");
+
+        let persisted = session
+            .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
+                UserMessageEvent {
+                    client_id: None,
+                    message: "after-external-discard".to_string(),
+                    images: None,
+                    local_images: Vec::new(),
+                    text_elements: Vec::new(),
+                    ..Default::default()
+                },
+            ))])
+            .await;
+        assert!(!persisted);
+        // Shutdown must still complete cleanly without emitting a fatal ErrorEvent.
+        assert!(handlers::shutdown(&session, "sub-gone".to_string()).await);
+    }
+    .with_subscriber(subscriber)
+    .await;
+
+    assert_eq!(
+        error_count.load(Ordering::SeqCst),
+        0,
+        "thread-gone rollout recording must be a non-fatal warning, never an ERROR"
+    );
+}
+
 #[tokio::test]
 async fn shutdown_drains_finishing_turn_before_closing_live_thread_and_ignores_late_rollout_writes()
 {

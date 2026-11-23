@@ -2059,3 +2059,48 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn shutdown_is_idempotent_across_clones_and_drains_queued_items() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let thread_id = ThreadId::new();
+    let recorder = RolloutRecorder::new(
+        &config,
+        RolloutRecorderParams::new(
+            thread_id,
+            /*forked_from_id*/ None,
+            /*parent_thread_id*/ None,
+            SessionSource::Exec,
+            /*thread_source*/ None,
+            "test_originator".to_string(),
+            BaseInstructions::default(),
+            Vec::new(),
+        ),
+    )
+    .await?;
+    let clone = recorder.clone();
+    let rollout_path = recorder.rollout_path().to_path_buf();
+
+    recorder
+        .record_canonical_items(&[agent_message_item("queued-before-shutdown")])
+        .await?;
+
+    let (first, second) = tokio::join!(recorder.shutdown(), clone.shutdown());
+    first?;
+    second?;
+    // A subsequent shutdown after the writer has already exited must stay Ok(()).
+    recorder.shutdown().await?;
+
+    let (items, loaded_thread_id, parse_errors) =
+        RolloutRecorder::load_rollout_items(&rollout_path).await?;
+    assert_eq!(loaded_thread_id, Some(thread_id));
+    assert_eq!(parse_errors, 0);
+    assert!(
+        items
+            .iter()
+            .any(|item| format!("{item:?}").contains("queued-before-shutdown")),
+        "queued item must be flushed before shutdown completes"
+    );
+    Ok(())
+}

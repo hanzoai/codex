@@ -2451,4 +2451,127 @@ mod tests {
             )
         }));
     }
+
+    #[tokio::test]
+    async fn live_thread_shutdown_waits_for_concurrent_appends_and_is_idempotent() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let store = Arc::new(LocalThreadStore::new(config, /*state_db*/ None));
+        let thread_id = ThreadId::new();
+        let live_thread = LiveThread::create(store.clone(), create_thread_params(thread_id))
+            .await
+            .expect("create live thread");
+        let rollout_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("live rollout path");
+
+        live_thread
+            .append_items(&[user_message_item("before-shutdown")])
+            .await
+            .expect("initial append");
+
+        let mut writers = Vec::new();
+        for idx in 0..8 {
+            let writer = live_thread.clone();
+            writers.push(tokio::spawn(async move {
+                let res = writer
+                    .append_items(&[user_message_item(&format!("concurrent-{idx}"))])
+                    .await;
+                // Each concurrent write either finishes before shutdown or cleanly sees Closed/ThreadNotFound.
+                match res {
+                    Ok(()) | Err(ThreadStoreError::ThreadNotFound { .. }) => {}
+                    Err(other) => panic!("unexpected append error during shutdown race: {other}"),
+                }
+            }));
+        }
+
+        let shutdown_a = live_thread.clone();
+        let shutdown_b = live_thread.clone();
+        let (res_a, res_b) = tokio::join!(shutdown_a.shutdown(), shutdown_b.shutdown());
+        res_a.expect("first shutdown should succeed");
+        res_b.expect("concurrent second shutdown should be idempotent");
+        for handle in writers {
+            handle.await.expect("writer task join");
+        }
+
+        assert!(live_thread.is_closed());
+        live_thread
+            .flush()
+            .await
+            .expect("post-shutdown flush must be a no-op");
+        live_thread
+            .persist(crate::PersistContext::Standard)
+            .await
+            .expect("post-shutdown persist must be a no-op");
+        live_thread
+            .shutdown()
+            .await
+            .expect("repeated shutdown must remain idempotent");
+
+        assert_rollout_contains_message(&rollout_path, "before-shutdown").await;
+    }
+
+    #[tokio::test]
+    async fn live_thread_resume_recovers_after_corrupted_tail_jsonl() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let store = Arc::new(LocalThreadStore::new(config, /*state_db*/ None));
+        let thread_id = ThreadId::new();
+        let live_thread = LiveThread::create(store.clone(), create_thread_params(thread_id))
+            .await
+            .expect("create live thread");
+        let rollout_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("live rollout path");
+
+        live_thread
+            .append_items(&[user_message_item("persisted-before-crash")])
+            .await
+            .expect("append initial item");
+        live_thread.shutdown().await.expect("shutdown thread");
+
+        // Simulate a crash leaving a truncated/corrupted JSON line without a trailing newline.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&rollout_path)
+            .expect("open rollout for corruption");
+        use std::io::Write as _;
+        file.write_all(b"{\"timestamp\":\"2026-11-22T00:00:00.000Z\",\"type\":\"event_msg\",\"payload\":{TRUNCATED")
+            .expect("write truncated line");
+        file.flush().expect("flush corruption");
+
+        let (resumed, history) = LiveThread::resume(
+            store.clone(),
+            ThreadHistoryMode::Legacy,
+            ResumeThreadParams {
+                thread_id,
+                rollout_path: Some(rollout_path.clone()),
+                history: None,
+                history_revision: None,
+                include_archived: true,
+                metadata: thread_metadata(),
+            },
+            /*resume_preparation*/ None,
+        )
+        .await
+        .expect("resume should recover from corrupted tail jsonl");
+        assert!(history.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::UserMessage(event))
+                    if event.message == "persisted-before-crash"
+            )
+        }));
+
+        resumed
+            .append_items(&[user_message_item("persisted-after-resume")])
+            .await
+            .expect("append after resume");
+        resumed.shutdown().await.expect("shutdown resumed thread");
+
+        assert_rollout_contains_message(&rollout_path, "persisted-before-crash").await;
+        assert_rollout_contains_message(&rollout_path, "persisted-after-resume").await;
+    }
 }

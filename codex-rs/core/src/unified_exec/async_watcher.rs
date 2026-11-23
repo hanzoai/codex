@@ -54,7 +54,10 @@ struct Buffer<const MAX_BYTES: usize = UNIFIED_EXEC_OUTPUT_DELTA_MAX_BYTES> {
 }
 
 /// Spawn a background task that emits ExecCommandOutputDelta events on UTF‑8 boundaries.
-pub(crate) fn start_streaming_output(process: &UnifiedExecProcess, context: &UnifiedExecContext) {
+pub(crate) fn start_streaming_output(
+    process: &UnifiedExecProcess,
+    context: &UnifiedExecContext,
+) -> tokio::task::JoinHandle<()> {
     let mut receiver = process.output_receiver();
     let output_drained = process.output_drained_notify();
     let exit_token = process.cancellation_token();
@@ -149,7 +152,7 @@ pub(crate) fn start_streaming_output(process: &UnifiedExecProcess, context: &Uni
 
         output.finish().await;
         output_drained.notify_one();
-    });
+    })
 }
 
 /// Spawn a background watcher that waits for the PTY to exit and then emits a
@@ -166,7 +169,7 @@ pub(crate) fn spawn_exit_watcher(
     started_at: Instant,
     network_denial_monitor: Option<tokio::task::JoinHandle<()>>,
     plugin_metrics_sidecar: Option<SharedPluginMetricsSidecar>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let session_ref = Arc::clone(&context.session);
     let turn_ref = Arc::clone(&context.step_context.turn);
     let model_info = Arc::clone(&context.step_context.settings.model_info);
@@ -239,7 +242,7 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
-    });
+    })
 }
 
 impl<const MAX_BYTES: usize> Buffer<MAX_BYTES> {

@@ -197,6 +197,7 @@ use codex_thread_store::ReadThreadParams;
 use codex_thread_store::ResumeThreadParams;
 use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
+use codex_thread_store::ThreadStoreError;
 use codex_thread_store::ThreadStoreResumePreparation;
 use codex_utils_audio::prepare_response_items as prepare_audio_response_items;
 use codex_utils_git_discovery::GitRootDiscovery;
@@ -5409,13 +5410,31 @@ impl Session {
 
     #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
-        if let Some(live_thread) = self.live_thread()
-            && let Err(e) = live_thread.append_items(items).await
-        {
-            if matches!(e, codex_thread_store::ThreadStoreError::ThreadNotFound { .. }) {
-                debug!("skipping rollout append after thread recorder closed: {e:#}");
-            } else {
-                error!("failed to record rollout items: {e:#}");
+        let Some(live_thread) = self.live_thread() else {
+            return true;
+        };
+        if live_thread.is_closed() {
+            debug!(
+                thread_id = %self.thread_id,
+                item_count = items.len(),
+                "skipping rollout persistence after thread shutdown"
+            );
+            return false;
+        }
+        if let Err(e) = live_thread.append_items(items).await {
+            match &e {
+                ThreadStoreError::ThreadNotFound { .. } => {
+                    warn!(
+                        thread_id = %self.thread_id,
+                        "rollout persistence skipped; thread is no longer active: {e:#}"
+                    );
+                }
+                _ => {
+                    warn!(
+                        thread_id = %self.thread_id,
+                        "failed to record rollout items: {e:#}"
+                    );
+                }
             }
             return false;
         }
