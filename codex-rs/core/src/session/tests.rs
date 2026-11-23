@@ -8806,6 +8806,108 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
 }
 
 #[tokio::test]
+async fn shutdown_drains_finishing_turn_before_closing_live_thread_and_ignores_late_rollout_writes()
+{
+    let (mut session, _turn_context) = make_session_and_context().await;
+    let config = session.get_config().await;
+    let local_store = Arc::new(codex_thread_store::LocalThreadStore::new(
+        codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
+        /*state_db*/ None,
+    ));
+    let thread_store: Arc<dyn codex_thread_store::ThreadStore> = local_store.clone();
+    let live_thread = LiveThread::create(
+        Arc::clone(&thread_store),
+        CreateThreadParams {
+            attached_thread: false,
+            creator_user_id: None,
+            creator_account_id: None,
+            session_id: session.session_id(),
+            thread_id: session.thread_id,
+            extra_config: None,
+            forked_from_id: None,
+            parent_thread_id: None,
+            source: SessionSource::Exec,
+            thread_source: None,
+            originator: "test_originator".to_string(),
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            selected_capability_roots: Vec::new(),
+            multi_agent_version: None,
+            history_mode: Default::default(),
+            subagent_history_start_ordinal: None,
+            history_base: None,
+            initial_window_id: ContextWindowId::new_uuid_v7(),
+            runtime_workspace_roots: None,
+            metadata: ThreadPersistenceMetadata {
+                cwd: Some(config.cwd.to_path_buf()),
+                model_provider: config.model_provider_id.clone(),
+                memory_mode: ThreadMemoryMode::Disabled,
+            },
+        },
+    )
+    .await
+    .expect("create local thread persistence");
+    session.services.thread_store = thread_store;
+    session.services.live_thread = Some(live_thread);
+
+    // Simulate a turn whose task has finished and delivered `TurnComplete`,
+    // while `on_task_finished` is still persisting legacy rollout events and
+    // flushing before releasing `completion_barrier`.
+    let barrier = tokio_util::sync::CancellationToken::new();
+    let barrier_guard = barrier.clone().drop_guard();
+    *session.active_turn.lock().await = Some(ActiveTurn {
+        completion_barrier: Some(barrier),
+        ..Default::default()
+    });
+    let session = Arc::new(session);
+
+    let session_for_tail = Arc::clone(&session);
+    let tail_persisted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tail_persisted_writer = Arc::clone(&tail_persisted);
+    let tail = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        let ok = session_for_tail
+            .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
+                UserMessageEvent {
+                    message: "persisted before live recorder closes".to_string(),
+                    ..Default::default()
+                },
+            ))])
+            .await;
+        tail_persisted_writer.store(ok, std::sync::atomic::Ordering::SeqCst);
+        session_for_tail
+            .flush_rollout()
+            .await
+            .expect("flush while completion barrier holds");
+        drop(barrier_guard);
+    });
+
+    assert!(handlers::shutdown(&session, "sub-shutdown".to_string()).await);
+    tail.await.expect("tail task");
+    assert!(
+        tail_persisted.load(std::sync::atomic::Ordering::SeqCst),
+        "shutdown must wait for completion_barrier before removing the live recorder"
+    );
+
+    // Once `live_thread.shutdown()` has closed the recorder, any late rollout
+    // append or flush degrades cleanly without fatal error.
+    assert!(
+        !session
+            .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
+                UserMessageEvent {
+                    message: "late item after recorder closed".to_string(),
+                    ..Default::default()
+                },
+            ))])
+            .await
+    );
+    session
+        .flush_rollout()
+        .await
+        .expect("late flush after recorder closed must be non-fatal");
+}
+
+#[tokio::test]
 async fn submission_loop_channel_close_runs_full_thread_teardown() -> anyhow::Result<()> {
     struct SessionStopMarker;
     struct ThreadStopMarker;

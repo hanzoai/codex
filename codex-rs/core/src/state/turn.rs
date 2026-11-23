@@ -39,6 +39,10 @@ pub(crate) struct ActiveTurn {
     /// Present when input admission is closed; cancelled when the final batch is recorded.
     /// Reservations that have not started still accept inputs.
     pub(crate) finishing: Option<CancellationToken>,
+    /// Cancelled once `on_task_finished` has emitted terminal events (including legacy
+    /// rollout events) and flushed the rollout, so session shutdown does not close the
+    /// live thread recorder underneath an unwinding turn.
+    pub(crate) completion_barrier: Option<CancellationToken>,
     pub(crate) turn_state: Arc<Mutex<TurnState>>,
 }
 
@@ -67,6 +71,7 @@ impl Default for ActiveTurn {
         Self {
             task: None,
             finishing: None,
+            completion_barrier: None,
             turn_state: Arc::new(Mutex::new(TurnState::default())),
         }
     }

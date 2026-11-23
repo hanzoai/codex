@@ -344,6 +344,7 @@ impl Session {
             let turn = active.get_or_insert_with(ActiveTurn::default);
             debug_assert!(turn.task.is_none());
             turn.finishing = None;
+            turn.completion_barrier = None;
             Arc::clone(&turn.turn_state)
         };
         turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
@@ -636,6 +637,7 @@ impl Session {
         let mut aborted_turn = false;
         let mut active_turn_to_clear = None;
         if let Some(mut active_turn) = self.take_active_turn(&reason).await {
+            let completion_barrier = active_turn.completion_barrier.take();
             let task = active_turn.task.take();
             aborted_turn = task.is_some();
             if let Some(task) = task {
@@ -644,6 +646,17 @@ impl Session {
                     reason.clone(),
                     &active_turn.turn_state,
                     /*error*/ None,
+                )
+                .await;
+            } else if let Some(completion_barrier) = completion_barrier {
+                // `on_task_finished` already took `task` and may have delivered
+                // `TurnComplete` to the client, prompting immediate session shutdown
+                // while legacy rollout events and the final flush are still running.
+                // Drain that completion tail before `live_thread.shutdown()` removes
+                // the live recorder.
+                let _ = tokio::time::timeout(
+                    Duration::from_millis(GRACEFULL_INTERRUPTION_TIMEOUT_MS),
+                    completion_barrier.cancelled(),
                 )
                 .await;
             }
@@ -738,6 +751,8 @@ impl Session {
             regular_output.is_some() && turn_context.terminal_error.lock().await.is_none();
         let finishing = CancellationToken::new();
         let finish_recording = finishing.clone().drop_guard();
+        let completion_barrier = CancellationToken::new();
+        let finish_completion = completion_barrier.clone().drop_guard();
         let (turn_state, unadmitted_task, mut pending_input, outcome_handoff) = {
             let mut active = self.active_turn.lock().await;
             let active_turn = active.as_mut()?;
@@ -755,6 +770,7 @@ impl Session {
             let task = active_turn.task.take()?;
             task.handle.detach();
             active_turn.finishing = Some(finishing);
+            active_turn.completion_barrier = Some(completion_barrier);
             (
                 Arc::clone(&active_turn.turn_state),
                 (task._agent_execution_guard.is_none() && task.pending_initial_input.is_some())
@@ -1007,6 +1023,7 @@ impl Session {
         if !saved_guardian_completion && let Err(err) = self.flush_rollout().await {
             warn!("failed to flush rollout after emitting terminal turn event: {err}");
         }
+        drop(finish_completion);
         if cleared_active_turn {
             self.maybe_start_turn_for_pending_work().await;
         }
