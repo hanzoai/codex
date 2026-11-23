@@ -16,6 +16,8 @@ pub mod pace;
 pub mod version;
 
 pub const PRODUCT_NAME: &str = "Hanzo";
+pub const APP_SLUG: &str = "hanzo";
+pub const CLI_NAME: &str = "dev";
 pub const INPUT_PLACEHOLDER: &str = "Ask Hanzo to do anything";
 pub const STARTUP_TIP: &str = "Use **/mcp** to inspect connected tools. Hanzo MCP provides cloud controls and local development tools.";
 

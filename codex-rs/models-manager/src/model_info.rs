@@ -191,7 +191,7 @@ const HANZO_INSTRUCTIONS_SUPPLEMENT: &str = r#"
   - **Enso** (`enso`, `enso-auto`, `enso-pro`, `enso-ultra`): Multi-model coding orchestration across the Hanzo catalog (`api.hanzo.ai/v1`).
   - **Kai** (`kai`, `~/.hanzo/dev/kai.toml`): Real-time decision agent over the Hanzo Decisions API (`api.hanzo.ai/v1/decisions`) providing model/reasoning routing, trigram workspace context discovery (`hanzo-trigram`), skill & tool selection, command risk gating, progress steering, and completion checks.
   - **Zen** (`zen5`, `zen5-pro`, `zen5-coder`, `zen6`, `zen6-flash`): Hanzo flagship reasoning and coding models (`hanzoai/engine`).
-- **Native Agentic Coding Flow (Built-in Codex Tools First)**:
+- **Native Agentic Coding Flow (Built-in Dev Tools First)**:
   - Always use built-in **`exec_command`** (and **`write_stdin`**) for all workspace exploration (`rg`, `rg --files`, `ls`, `sed -n`, `cat`, `head`, `tail`, `find`), git commands (`git status`, `git diff`, `git log`), builds, and test runs so the TUI groups read/search/list operations into native **`Exploring` / `Explored`** cells.
   - Always use built-in **`apply_patch`** (`{"patch": "*** Begin Patch\n*** Update File: ..."}`) to create, update, or delete files so changes render as native diff cells.
   - Use **`update_plan`** for multi-step task plans, **`view_image`** for local images, **`request_user_input`** for structured user questions, and **`spawn_agent`** / subagent tools for parallel subtasks.

@@ -4,7 +4,6 @@
 //! into another, especially while Plan mode is active.
 
 use super::*;
-use crate::bottom_pane::SearchMode;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
 
 const ULTRA_REASONING_CONCURRENCY_WARNING_THRESHOLD: usize = 8;

@@ -163,7 +163,6 @@ mod mention_usage;
 pub(crate) use mention_usage::MentionUsage;
 mod mentions_v2;
 mod model_switcher_view;
-pub(crate) use model_switcher_view::ModelSwitcherEffortOption;
 pub(crate) use model_switcher_view::ModelSwitcherItem;
 pub(crate) use model_switcher_view::ModelSwitcherView;
 mod picker_presets;

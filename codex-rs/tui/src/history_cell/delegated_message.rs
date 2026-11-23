@@ -13,7 +13,7 @@ pub(crate) struct DelegatedMessageCell {
 impl DelegatedMessageCell {
     pub(crate) fn new(source_thread_id: &str, markdown: String) -> Self {
         Self {
-            attribution: format!("Sent by Codex from task {source_thread_id}"),
+            attribution: format!("Sent by {} from task {source_thread_id}", hanzo::PRODUCT_NAME),
             markdown,
         }
     }

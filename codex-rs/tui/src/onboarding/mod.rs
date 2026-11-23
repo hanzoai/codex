@@ -18,4 +18,4 @@ pub(crate) use trust_directory::TrustCancelAction;
 mod welcome;
 
 pub(crate) const SETUP_CONNECTION_LOST: &str =
-    "Codex lost its connection during setup. Restart Codex to continue.";
+    "Hanzo lost its connection during setup. Restart Hanzo to continue.";

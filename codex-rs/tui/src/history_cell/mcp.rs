@@ -68,6 +68,18 @@ impl McpInvocation {
     pub(crate) fn is_computer_activity(&self) -> bool {
         self.server == "cua_repl"
     }
+
+    pub(crate) fn display_server(&self) -> &str {
+        display_mcp_server_name(&self.server)
+    }
+}
+
+pub(super) fn display_mcp_server_name(server: &str) -> &str {
+    match server {
+        "codex" => hanzo::APP_SLUG,
+        "codex_apps" => "hanzo_apps",
+        other => other,
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -181,7 +193,7 @@ impl McpToolCallCell {
                 title
                     .clone()
                     .unwrap_or_else(|| {
-                        format!("{}.{}", self.invocation.server, self.invocation.tool)
+                        format!("{}.{}", self.invocation.display_server(), self.invocation.tool)
                     })
                     .fg(accent_color()),
             )
@@ -856,7 +868,7 @@ fn format_mcp_invocation(invocation: &McpInvocation) -> Line<'_> {
         .unwrap_or_default();
 
     let invocation_spans = vec![
-        invocation.server.as_str().fg(accent_color()),
+        invocation.display_server().fg(accent_color()),
         ".".into(),
         invocation.tool.as_str().fg(accent_color()),
         "(".into(),

@@ -301,3 +301,27 @@ fn a_starting_server_keeps_a_read_from_being_guessed() {
     ));
     assert!(message.contains("pass one of: cloud, hanzo"), "{message}");
 }
+
+#[test]
+fn list_resource_args_default_invocation_server_uses_hanzo_app_slug() {
+    let args = ListResourceArgs::parse(Some(json!({}))).expect("parse empty args");
+    assert_eq!(
+        args.server.unwrap_or_else(|| hanzo::APP_SLUG.to_string()),
+        "hanzo"
+    );
+
+    let blank = ListResourceArgs::parse(Some(json!({"server": "   "}))).expect("parse blank args");
+    assert_eq!(
+        blank.server.unwrap_or_else(|| hanzo::APP_SLUG.to_string()),
+        "hanzo"
+    );
+
+    let explicit =
+        ListResourceArgs::parse(Some(json!({"server": " docs "}))).expect("parse explicit server");
+    assert_eq!(
+        explicit
+            .server
+            .unwrap_or_else(|| hanzo::APP_SLUG.to_string()),
+        "docs"
+    );
+}

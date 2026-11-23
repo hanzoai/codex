@@ -26,7 +26,13 @@ impl McpToolCallCell {
             .and_then(serde_json::Value::as_str)
             .map(|title| title.split_whitespace().collect::<Vec<_>>().join(" "))
             .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| format!("{}.{}", self.invocation.server, self.invocation.tool))
+            .unwrap_or_else(|| {
+                format!(
+                    "{}.{}",
+                    self.invocation.display_server(),
+                    self.invocation.tool
+                )
+            })
     }
 
     pub(super) fn compact_mcp_lines(&self, width: u16) -> Vec<HyperlinkLine> {

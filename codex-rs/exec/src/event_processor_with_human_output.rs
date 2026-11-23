@@ -78,6 +78,11 @@ impl EventProcessorWithHumanOutput {
                 );
             }
             ThreadItemPayload::McpToolCall { server, tool, .. } => {
+                let server = match server.as_str() {
+                    "codex" => hanzo::APP_SLUG,
+                    "codex_apps" => "hanzo_apps",
+                    other => other,
+                };
                 eprintln!(
                     "{} {} {}",
                     "mcp:".style(self.bold),
@@ -189,6 +194,11 @@ impl EventProcessorWithHumanOutput {
                     McpToolCallStatus::Completed => "completed".style(self.green),
                     McpToolCallStatus::Failed => "failed".style(self.red),
                     McpToolCallStatus::InProgress => "in_progress".style(self.dimmed),
+                };
+                let server = match server.as_str() {
+                    "codex" => hanzo::APP_SLUG,
+                    "codex_apps" => "hanzo_apps",
+                    other => other,
                 };
                 eprintln!(
                     "{} {} {}",

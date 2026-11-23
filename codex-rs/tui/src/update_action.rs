@@ -47,7 +47,7 @@ impl UpdateAction {
     /// Returns the list of command-line arguments for invoking the update.
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            UpdateAction::Daemon(source) => ("codex", source.command_args()),
+            UpdateAction::Daemon(source) => (hanzo::CLI_NAME, source.command_args()),
             UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", hanzo::NPM_PACKAGE]),
             UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", hanzo::NPM_PACKAGE]),
             UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", hanzo::NPM_PACKAGE]),
@@ -161,7 +161,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    r#"s=$(curl -fsSL https://hanzo.sh) && sh -c "$s" sh -q dev"#
+                    hanzo::INSTALL_SCRIPT,
                 ][..],
             )
         );

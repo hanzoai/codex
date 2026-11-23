@@ -67,7 +67,10 @@ impl ListMcpResourcesHandler {
         let args = ListResourceArgs::parse(arguments.clone())?;
 
         let invocation = McpInvocation {
-            server: args.server.clone().unwrap_or_else(|| "codex".to_string()),
+            server: args
+                .server
+                .clone()
+                .unwrap_or_else(|| hanzo::APP_SLUG.to_string()),
             tool: "list_mcp_resources".to_string(),
             arguments: arguments.clone(),
         };

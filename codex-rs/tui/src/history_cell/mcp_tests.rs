@@ -669,3 +669,49 @@ fn mcp_result_preview_preserves_source_text_and_excludes_tree_gutters() {
         );
     }
 }
+
+#[test]
+fn mcp_tool_call_displays_hanzo_namespace_for_codex_and_codex_apps() {
+    let mut resource_cell = new_active_mcp_tool_call(
+        "call-list-resources".to_owned(),
+        McpInvocation {
+            server: "codex".to_owned(),
+            tool: "list_mcp_resources".to_owned(),
+            arguments: Some(json!({})),
+        },
+        /*animations_enabled*/ false,
+    );
+    resource_cell.complete(Duration::ZERO, Ok(result(Vec::new())));
+    assert_eq!(
+        resource_cell.tool_call_labels(),
+        ["Called hanzo.list_mcp_resources"]
+    );
+    assert_eq!(
+        resource_cell.display_lines(/*width*/ 80)[0].to_string(),
+        "• Called hanzo.list_mcp_resources({})"
+    );
+    assert_eq!(
+        resource_cell.raw_lines()[0].to_string(),
+        "Called hanzo.list_mcp_resources({})"
+    );
+
+    let mut apps_cell = new_active_mcp_tool_call(
+        "call-apps".to_owned(),
+        McpInvocation {
+            server: "codex_apps".to_owned(),
+            tool: "search".to_owned(),
+            arguments: Some(json!({"query": "docs"})),
+        },
+        /*animations_enabled*/ false,
+    );
+    apps_cell.complete(Duration::ZERO, Ok(result(Vec::new())));
+    assert_eq!(apps_cell.tool_call_labels(), ["Called hanzo_apps.search"]);
+    assert_eq!(
+        apps_cell.display_lines(/*width*/ 80)[0].to_string(),
+        "• Called hanzo_apps.search({\"query\":\"docs\"})"
+    );
+    assert_eq!(
+        apps_cell.raw_lines()[0].to_string(),
+        "Called hanzo_apps.search({\"query\":\"docs\"})"
+    );
+}
