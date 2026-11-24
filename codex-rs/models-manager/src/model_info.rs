@@ -195,13 +195,11 @@ const HANZO_INSTRUCTIONS_SUPPLEMENT: &str = r#"
   - Always use built-in **`exec_command`** (and **`write_stdin`**) for all workspace exploration (`rg`, `rg --files`, `ls`, `sed -n`, `cat`, `head`, `tail`, `find`), git commands (`git status`, `git diff`, `git log`), builds, and test runs so the TUI groups read/search/list operations into native **`Exploring` / `Explored`** cells.
   - Always use built-in **`apply_patch`** (`{"patch": "*** Begin Patch\n*** Update File: ..."}`) to create, update, or delete files so changes render as native diff cells.
   - Use **`update_plan`** for multi-step task plans, **`view_image`** for local images, **`request_user_input`** for structured user questions, and **`spawn_agent`** / subagent tools for parallel subtasks.
-  - Never use MCP `fs` or `exec` tools for local file reading, listing, searching, patching, or shell execution.
-- **Slim Companion MCP (`hanzo-mcp` / `@hanzo/mcp`)**: `dev` connects to `hanzo-mcp` (`mcp_servers.hanzo`) for the 5 specialized non-overlapping tools (`mcp__hanzo__*`):
-  - `code_search`: Trigram symbol and cross-repo code search (`hanzo-trigram`).
-  - `lsp`: Language Server Protocol navigation (`definition`, `references`, `diagnostics`, `symbols`).
-  - `browser`: Persistent browser automation (`hanzo-browser` / ZAP bridge `$XDG_RUNTIME_DIR/zap/zapd.sock` / CDP `127.0.0.1:9222`).
-  - `web_search`: Live web search.
-  - `web_read`: Clean web page and documentation extraction.
+  - Prefer built-in `exec_command` / `apply_patch` in interactive TUI sessions so read/search/diff cells render natively, or `mcp__hanzo__*` whenever structured HIP-0300 actions are needed.
+- **Canonical HIP-0300 MCP (`hanzo-mcp` / `@hanzo/mcp`)**: `dev` connects to `hanzo-mcp` (`mcp_servers.hanzo`) exposing the 19 canonical HIP-0300 tools (`mcp__hanzo__*`) — one canonical tool per domain:
+  - Core workspace & code: `fs`, `exec`, `code` (trigram symbol search + LSP navigation), `git`, `fetch` (web search & page fetch), `workspace`.
+  - Interaction & cognition: `browser`, `computer`, `ui`, `kai` (single unified Kai decision/action tool), `think`, `plan`, `memory`.
+  - Cloud & orchestration: `tasks`, `tracker`, `coding`, `research`, `skills`, `hanzo`.
 - **Native Hanzo OSS Skills Stack (`SKILL.md` & `hanzoskills.com`)**:
   - Skills live in `<cwd>/.hanzo/dev/skills/*/SKILL.md`, `<cwd>/.hanzo/skills/*/SKILL.md`, `<cwd>/.agents/skills/*/SKILL.md`, and `~/.hanzo/dev/skills/*/SKILL.md` (including built-in `dev`, `code-review`, `ui`, `hanzo-mcp`, and `hanzo-oss` skills).
   - Use progressive disclosure when consulting `hanzoskills.com`: Level 0 index (`https://hanzoskills.com/mcp/index.json` and `https://hanzoskills.com/oss/index.json`) -> Level 1 per-tool/skill (`https://hanzoskills.com/mcp/<tool>.json` or `https://hanzoskills.com/<skill>.md`) -> Level 2 live contract (`POST https://api.hanzo.ai/v1/mcp` `describe` or `hanzo <group> --help`).

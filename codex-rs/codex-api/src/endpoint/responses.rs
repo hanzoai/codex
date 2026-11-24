@@ -175,7 +175,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         compression: Compression,
         turn_state: Option<Arc<OnceLock<String>>>,
     ) -> Result<ResponseStream, ApiError> {
-        let (chat_json, custom_tool_names) = build_chat_completions_request(request);
+        let (chat_json, tool_meta) = build_chat_completions_request(request);
         let body = EncodedJsonBody::encode(&chat_json).map_err(|e| {
             ApiError::Stream(format!("failed to encode chat completions request: {e}"))
         })?;
@@ -207,7 +207,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
             self.session.provider().stream_idle_timeout,
             self.sse_telemetry.clone(),
             turn_state,
-            custom_tool_names,
+            tool_meta,
         ))
     }
 

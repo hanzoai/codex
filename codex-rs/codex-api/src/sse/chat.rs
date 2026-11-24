@@ -26,6 +26,7 @@ use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -38,11 +39,110 @@ const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 
+#[derive(Default, Debug, Clone)]
+pub(crate) struct ChatToolMetadata {
+    pub custom_tool_names: HashSet<String>,
+    pub namespaced_tools: HashMap<String, (String, String)>,
+}
+
+fn flat_tool_name(namespace: Option<&str>, name: &str) -> String {
+    match namespace.filter(|ns| !ns.is_empty() && *ns != "functions") {
+        Some(ns) => format!("{ns}__{name}"),
+        None => name.to_string(),
+    }
+}
+
+fn push_single_chat_tool(
+    obj: &Map<String, Value>,
+    raw: &Value,
+    namespace: Option<&str>,
+    chat_tools: &mut Vec<Value>,
+    meta: &mut ChatToolMetadata,
+) {
+    let tool_type = obj.get("type").and_then(Value::as_str).unwrap_or("function");
+    match tool_type {
+        "function" => {
+            if namespace.is_none() && obj.contains_key("function") {
+                chat_tools.push(raw.clone());
+            } else if let Some(inner_name) = obj.get("name").and_then(Value::as_str) {
+                let exposed_name = flat_tool_name(namespace, inner_name);
+                if let Some(ns) = namespace.filter(|ns| !ns.is_empty() && *ns != "functions") {
+                    meta.namespaced_tools
+                        .insert(exposed_name.clone(), (ns.to_string(), inner_name.to_string()));
+                }
+                let mut fn_obj = Map::new();
+                fn_obj.insert("name".to_string(), Value::String(exposed_name));
+                if let Some(desc) = obj.get("description") {
+                    fn_obj.insert("description".to_string(), desc.clone());
+                }
+                if let Some(params) = obj.get("parameters") {
+                    fn_obj.insert("parameters".to_string(), params.clone());
+                } else {
+                    fn_obj.insert(
+                        "parameters".to_string(),
+                        json!({ "type": "object", "properties": {} }),
+                    );
+                }
+                chat_tools.push(json!({
+                    "type": "function",
+                    "function": Value::Object(fn_obj),
+                }));
+            }
+        }
+        "custom" => {
+            if let Some(inner_name) = obj.get("name").and_then(Value::as_str) {
+                let exposed_name = flat_tool_name(namespace, inner_name);
+                if let Some(ns) = namespace.filter(|ns| !ns.is_empty() && *ns != "functions") {
+                    meta.namespaced_tools
+                        .insert(exposed_name.clone(), (ns.to_string(), inner_name.to_string()));
+                }
+                meta.custom_tool_names.insert(exposed_name.clone());
+                let description = obj
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Custom freeform tool");
+                chat_tools.push(json!({
+                    "type": "function",
+                    "function": {
+                        "name": exposed_name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "input": {
+                                    "type": "string",
+                                    "description": "Raw freeform input payload for this tool."
+                                }
+                            },
+                            "required": ["input"]
+                        }
+                    }
+                }));
+            }
+        }
+        "namespace" => {
+            let Some(ns_name) = obj.get("name").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(ns_tools) = obj.get("tools").and_then(Value::as_array) else {
+                return;
+            };
+            for nested in ns_tools {
+                if let Some(nested_obj) = nested.as_object() {
+                    push_single_chat_tool(nested_obj, nested, Some(ns_name), chat_tools, meta);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Converts a [`ResponsesApiRequest`] into an OpenAI `/v1/chat/completions` JSON body,
-/// returning `(body_json, custom_tool_names)` so custom tools round-trip cleanly.
+/// returning `(body_json, tool_metadata)` so custom and namespaced MCP/multi-agent tools
+/// round-trip cleanly across all `/v1/chat/completions` inference engines.
 pub(crate) fn build_chat_completions_request(
     req: &ResponsesApiRequest,
-) -> (Value, HashSet<String>) {
+) -> (Value, ChatToolMetadata) {
     let mut messages: Vec<Value> = Vec::new();
     for item in &req.input {
         match item {
@@ -77,20 +177,24 @@ pub(crate) fn build_chat_completions_request(
             }
             ResponseItem::FunctionCall {
                 name,
+                namespace,
                 arguments,
                 call_id,
                 ..
             } => {
-                append_assistant_tool_call(&mut messages, call_id, name, arguments);
+                let exposed_name = flat_tool_name(namespace.as_deref(), name);
+                append_assistant_tool_call(&mut messages, call_id, &exposed_name, arguments);
             }
             ResponseItem::CustomToolCall {
                 name,
+                namespace,
                 input,
                 call_id,
                 ..
             } => {
+                let exposed_name = flat_tool_name(namespace.as_deref(), name);
                 let arguments = json!({ "input": input }).to_string();
-                append_assistant_tool_call(&mut messages, call_id, name, &arguments);
+                append_assistant_tool_call(&mut messages, call_id, &exposed_name, &arguments);
             }
             ResponseItem::FunctionCallOutput {
                 call_id, output, ..
@@ -114,67 +218,14 @@ pub(crate) fn build_chat_completions_request(
         }
     }
 
-    let mut custom_tool_names = HashSet::new();
+    let mut meta = ChatToolMetadata::default();
     let mut chat_tools = Vec::new();
     if let Some(tools) = req.tools.as_ref()
         && let Ok(Value::Array(raw_tools)) = serde_json::from_str::<Value>(tools.as_raw_value().get())
     {
         for raw in raw_tools {
-            let Some(obj) = raw.as_object() else {
-                continue;
-            };
-            let tool_type = obj.get("type").and_then(Value::as_str).unwrap_or("function");
-            match tool_type {
-                "function" => {
-                    if obj.contains_key("function") {
-                        chat_tools.push(raw);
-                    } else if let Some(name) = obj.get("name").and_then(Value::as_str) {
-                        let mut fn_obj = Map::new();
-                        fn_obj.insert("name".to_string(), Value::String(name.to_string()));
-                        if let Some(desc) = obj.get("description") {
-                            fn_obj.insert("description".to_string(), desc.clone());
-                        }
-                        if let Some(params) = obj.get("parameters") {
-                            fn_obj.insert("parameters".to_string(), params.clone());
-                        } else {
-                            fn_obj.insert(
-                                "parameters".to_string(),
-                                json!({ "type": "object", "properties": {} }),
-                            );
-                        }
-                        chat_tools.push(json!({
-                            "type": "function",
-                            "function": Value::Object(fn_obj),
-                        }));
-                    }
-                }
-                "custom" => {
-                    if let Some(name) = obj.get("name").and_then(Value::as_str) {
-                        custom_tool_names.insert(name.to_string());
-                        let description = obj
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Custom freeform tool");
-                        chat_tools.push(json!({
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "description": description,
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "input": {
-                                            "type": "string",
-                                            "description": "Raw freeform input payload for this tool."
-                                        }
-                                    },
-                                    "required": ["input"]
-                                }
-                            }
-                        }));
-                    }
-                }
-                _ => {}
+            if let Some(obj) = raw.as_object() {
+                push_single_chat_tool(obj, &raw, None, &mut chat_tools, &mut meta);
             }
         }
     }
@@ -227,7 +278,7 @@ pub(crate) fn build_chat_completions_request(
         );
     }
 
-    (Value::Object(body), custom_tool_names)
+    (Value::Object(body), meta)
 }
 
 fn convert_message_content(content: &[ContentItem]) -> Value {
@@ -313,7 +364,7 @@ pub(crate) fn spawn_chat_completions_stream(
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     turn_state: Option<Arc<OnceLock<String>>>,
-    custom_tool_names: HashSet<String>,
+    meta: ChatToolMetadata,
 ) -> ResponseStream {
     let rate_limit_snapshots = parse_all_rate_limits(&stream_response.headers);
     let server_model = stream_response
@@ -348,7 +399,7 @@ pub(crate) fn spawn_chat_completions_stream(
             tx_event,
             idle_timeout,
             telemetry,
-            custom_tool_names,
+            meta,
         )
         .await;
     });
@@ -366,7 +417,7 @@ async fn process_chat_sse(
     tx_event: mpsc::Sender<Result<ResponseEvent, ApiError>>,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
-    custom_tool_names: HashSet<String>,
+    meta: ChatToolMetadata,
 ) {
     let mut stream = stream.eventsource();
     let mut created_sent = false;
@@ -643,7 +694,12 @@ async fn process_chat_sse(
             tc.id
         };
         let item_id = Some(ResponseItemId::with_suffix("fc", &call_id));
-        let item = if custom_tool_names.contains(&tc.name) {
+        let is_custom = meta.custom_tool_names.contains(&tc.name);
+        let (namespace, resolved_name) = match meta.namespaced_tools.get(&tc.name) {
+            Some((ns, inner)) => (Some(ns.clone()), inner.clone()),
+            None => (None, tc.name),
+        };
+        let item = if is_custom {
             let input = serde_json::from_str::<Value>(&tc.arguments)
                 .ok()
                 .and_then(|v| v.get("input").and_then(Value::as_str).map(str::to_string))
@@ -652,8 +708,8 @@ async fn process_chat_sse(
                 id: item_id,
                 status: Some("completed".to_string()),
                 call_id,
-                name: tc.name,
-                namespace: None,
+                name: resolved_name,
+                namespace,
                 input,
                 encrypted_content: None,
                 internal_chat_message_metadata_passthrough: None,
@@ -667,8 +723,8 @@ async fn process_chat_sse(
             ResponseItem::FunctionCall {
                 id: item_id,
                 status: Some("completed".to_string()),
-                name: tc.name,
-                namespace: None,
+                name: resolved_name,
+                namespace,
                 arguments,
                 encrypted_function_args: None,
                 call_id,
@@ -730,3 +786,7 @@ fn parse_chat_usage(usage: &Value) -> Option<TokenUsage> {
         codex_rollout_budget_units: None,
     })
 }
+
+#[cfg(test)]
+#[path = "chat_tests.rs"]
+mod chat_tests;
