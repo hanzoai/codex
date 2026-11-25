@@ -199,6 +199,10 @@ impl HookEnvironmentExecutor for EnvironmentCommandExecutor {
                 ShellType::Cmd => bail!("environment command hooks require PowerShell on Windows"),
             };
             let argv = shell.derive_exec_args(&script, environment.config().allow_login_shell);
+            let argv = codex_shell_command::powershell::encode_powershell_command_for_exec_with_options(
+                &argv,
+                /*non_interactive*/ false,
+            );
             // Keep network attribution registered until the hook and its output are complete.
             let deadline = tokio::time::Instant::now() + timeout;
             let (params, _execution_network) = tokio::time::timeout_at(deadline, self.launch_params(environment, argv, env))

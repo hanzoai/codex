@@ -383,6 +383,7 @@ pub async fn build_exec_request(
     } else {
         (env, None)
     };
+    let command = codex_shell_command::powershell::encode_powershell_command_for_exec(&command);
     let (program, args) = command.split_first().ok_or_else(|| {
         CodexErr::Io(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -485,6 +486,7 @@ pub(crate) async fn execute_exec_request(
         .to_abs_path()
         .map_err(|err| CodexErr::InvalidRequest(format!("invalid sandbox cwd: {err}")))?;
 
+    let command = codex_shell_command::powershell::encode_powershell_command_for_exec(&command);
     let params = ExecParams {
         command,
         cwd,
@@ -812,8 +814,11 @@ fn finalize_exec_result(
             }
 
             let stdout = raw_output.stdout.from_utf8_lossy();
-            let stderr = raw_output.stderr.from_utf8_lossy();
-            let aggregated_output = raw_output.aggregated_output.from_utf8_lossy();
+            let mut stderr = raw_output.stderr.from_utf8_lossy();
+            stderr.text = codex_shell_command::powershell::decode_powershell_clixml(&stderr.text);
+            let mut aggregated_output = raw_output.aggregated_output.from_utf8_lossy();
+            aggregated_output.text =
+                codex_shell_command::powershell::decode_powershell_clixml(&aggregated_output.text);
             let exec_output = ExecToolCallOutput {
                 exit_code,
                 stdout,
@@ -954,6 +959,7 @@ async fn exec(
             })?;
     }
 
+    let command = codex_shell_command::powershell::encode_powershell_command_for_exec(&command);
     let (program, args) = command.split_first().ok_or_else(|| {
         CodexErr::Io(io::Error::new(
             io::ErrorKind::InvalidInput,

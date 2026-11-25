@@ -412,6 +412,8 @@ impl ToolRouter {
             ..
         } = call;
 
+        crate::session::hanzo_guards::check_tool_allowed_in_turn(&session, &tool_name, &payload)?;
+
         // Keep the legacy ToolInvocation.turn field tied to the same request state until handlers migrate.
         let turn = Arc::clone(&step_context.turn);
         let invocation = ToolInvocation {

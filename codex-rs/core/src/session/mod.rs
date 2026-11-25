@@ -260,6 +260,7 @@ mod config_refresh;
 mod announce;
 pub(crate) mod context_window;
 mod cycle;
+pub(crate) mod hanzo_guards;
 mod daemon_recovery;
 mod environment;
 mod extension_interruption;

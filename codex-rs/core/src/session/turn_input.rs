@@ -195,7 +195,10 @@ impl PreparedTurnInputSettings {
                         submission_id.clone(),
                         updates,
                         options,
-                        |current, proposed| kind.permits_settings(current, proposed),
+                        |current, proposed| {
+                            kind.permits_settings(current, proposed)
+                                && !super::hanzo_guards::is_readonly_guard_active(session)
+                        },
                     )
                     .await?
             }

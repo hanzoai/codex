@@ -10,9 +10,11 @@ pub mod catalog;
 pub mod controller;
 pub mod desktop;
 pub mod effort;
+pub mod file_guard;
 pub mod logo;
 pub mod model;
 pub mod pace;
+pub mod readonly_guard;
 pub mod version;
 
 pub const PRODUCT_NAME: &str = "Hanzo";

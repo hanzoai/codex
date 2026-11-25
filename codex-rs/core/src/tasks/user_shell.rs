@@ -383,31 +383,38 @@ fn prepare_user_shell_exec_command(
     shell_environment_set: &HashMap<String, String>,
     exec_env_map: &mut HashMap<String, String>,
 ) -> Vec<String> {
-    #[cfg(unix)]
-    {
-        prepare_user_shell_exec_command_with_path_prepend(
-            display_command,
-            shell,
-            shell_snapshot,
-            shell_environment_set,
-            exec_env_map,
-            apply_package_path_prepend,
-        )
-    }
+    let cmd = {
+        #[cfg(unix)]
+        {
+            prepare_user_shell_exec_command_with_path_prepend(
+                display_command,
+                shell,
+                shell_snapshot,
+                shell_environment_set,
+                exec_env_map,
+                apply_package_path_prepend,
+            )
+        }
 
-    #[cfg(not(unix))]
-    {
-        maybe_wrap_shell_lc_with_snapshot(
-            display_command,
-            shell,
-            shell_snapshot,
-            shell_environment_set,
-            exec_env_map,
-            // On non-Unix targets, arg0 has already prepended the package path
-            // to the process PATH before create_env() builds exec_env_map.
-            // RuntimePathPrepends is only needed for Unix shell snapshot replay.
-            &RuntimePathPrepends::default(),
-        )
+        #[cfg(not(unix))]
+        {
+            maybe_wrap_shell_lc_with_snapshot(
+                display_command,
+                shell,
+                shell_snapshot,
+                shell_environment_set,
+                exec_env_map,
+                // On non-Unix targets, arg0 has already prepended the package path
+                // to the process PATH before create_env() builds exec_env_map.
+                // RuntimePathPrepends is only needed for Unix shell snapshot replay.
+                &RuntimePathPrepends::default(),
+            )
+        }
+    };
+    if shell.shell_type == crate::shell::ShellType::PowerShell {
+        codex_shell_command::powershell::encode_powershell_command_for_exec(&cmd)
+    } else {
+        cmd
     }
 }
 

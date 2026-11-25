@@ -178,3 +178,11 @@ fn request_permissions_tool_includes_full_permission_schema() {
         })
     );
 }
+
+#[test]
+fn windows_shell_guidance_directs_models_to_apply_patch_and_warns_against_bak_truncation() {
+    let guidance = windows_shell_guidance();
+    assert!(guidance.contains("apply_patch"));
+    assert!(guidance.contains("Set-Content"));
+    assert!(guidance.contains(".bak"));
+}

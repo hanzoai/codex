@@ -209,6 +209,17 @@ impl ExecCommandHandler {
             }));
         }
 
+        let file_guard = crate::session::hanzo_guards::file_guard(&session);
+        let local_cwd = (!prepared.turn_environment.environment().is_remote())
+            .then(|| prepared.cwd.to_abs_path().ok())
+            .flatten();
+        let file_snapshot = file_guard
+            .pre_shell_command(
+                &prepared.hook_command,
+                local_cwd.as_deref().map(AsRef::as_ref),
+            )
+            .map_err(FunctionCallError::RespondToModel)?;
+
         emit_unified_exec_tty_metric(&step_context.session_telemetry, prepared.tty);
         crate::tools::lifecycle::notify_command_start(
             context.session.as_ref(),
@@ -237,14 +248,37 @@ impl ExecCommandHandler {
             None => manager.exec_command(request, &context).await,
         };
         match result {
-            Ok(response) => Ok(boxed_tool_output(response)),
+            Ok(mut response) => {
+                if let Some(warning) =
+                    file_guard.post_shell_command(&hook_command, response.exit_code, file_snapshot)
+                {
+                    if response.raw_output.text.is_empty() {
+                        response.raw_output.text = warning;
+                    } else {
+                        response.raw_output.text =
+                            format!("{}\n\n{warning}", response.raw_output.text);
+                    }
+                }
+                Ok(boxed_tool_output(response))
+            }
             Err(UnifiedExecError::SandboxDenied {
                 output,
                 original_token_count,
                 output_omitted_bytes,
                 ..
             }) => {
-                let output_text = output.aggregated_output.text;
+                let mut output_text = output.aggregated_output.text;
+                if let Some(warning) = file_guard.post_shell_command(
+                    &hook_command,
+                    Some(output.exit_code),
+                    file_snapshot,
+                ) {
+                    if output_text.is_empty() {
+                        output_text = warning;
+                    } else {
+                        output_text = format!("{output_text}\n\n{warning}");
+                    }
+                }
                 let original_token_count =
                     original_token_count.unwrap_or_else(|| approx_token_count(&output_text));
                 Ok(boxed_tool_output(ExecCommandToolOutput {
@@ -267,6 +301,7 @@ impl ExecCommandHandler {
                 }))
             }
             Err(err) => {
+                let _ = file_guard.post_shell_command(&hook_command, Some(-1), file_snapshot);
                 let message = format!("exec_command failed: {err:?}");
                 Err(FunctionCallError::RespondToModel(truncate_middle_chars(
                     &message,

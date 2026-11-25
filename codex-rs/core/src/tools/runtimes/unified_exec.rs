@@ -54,7 +54,7 @@ use codex_protocol::protocol::WarningEvent;
 use codex_sandboxing::SandboxCommand;
 use codex_sandboxing::SandboxablePreference;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
-use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
+use codex_shell_command::powershell::encode_powershell_command_for_exec_with_options;
 use codex_utils_path_uri::PathUri;
 use std::collections::HashMap;
 use std::io;
@@ -547,7 +547,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
                 // Remove the prefix once supported PowerShell versions initialize $PWD under a denied ancestor.
                 script.insert_str(0, include_str!("../../../assets/tools/mxc_pwsh_cwd.ps1"));
             }
-            prefix_powershell_script_with_utf8(&command)
+            encode_powershell_command_for_exec_with_options(&command, !prepared.tty)
         } else {
             command
         };

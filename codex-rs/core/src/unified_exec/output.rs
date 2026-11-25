@@ -24,8 +24,10 @@ impl From<&str> for CapturedStream {
 
 impl<const N: usize> From<&HeadTailBuffer<N>> for CapturedStream {
     fn from(buffer: &HeadTailBuffer<N>) -> Self {
+        let bytes = buffer.to_bytes_with_omission_marker();
+        let raw = String::from_utf8_lossy(&bytes);
         Self {
-            text: String::from_utf8_lossy(&buffer.to_bytes_with_omission_marker()).into_owned(),
+            text: codex_shell_command::powershell::decode_powershell_clixml(&raw),
             omitted_bytes: buffer.omitted_bytes(),
         }
     }

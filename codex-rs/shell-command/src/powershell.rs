@@ -1,16 +1,47 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 use crate::command_safety::try_parse_powershell_commands;
 use crate::shell_detect::ShellType;
 use crate::shell_detect::detect_shell_type;
 
-const POWERSHELL_FLAGS: &[&str] = &["-nologo", "-noprofile", "-command", "-c"];
+const POWERSHELL_SWITCH_FLAGS: &[&str] = &["-nologo", "-noprofile", "-noninteractive", "-sta", "-mta"];
+const POWERSHELL_VALUE_FLAGS: &[&str] = &[
+    "-inputformat",
+    "-if",
+    "-outputformat",
+    "-of",
+    "-executionpolicy",
+    "-ep",
+];
 
 /// Prefixed command for powershell shell calls to request UTF-8 console output.
 pub const UTF8_OUTPUT_PREFIX: &str =
     "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
+
+/// Prologue prepended inside `-EncodedCommand` scripts so both pipeline `$OutputEncoding`
+/// and `[Console]::OutputEncoding` emit BOM-less UTF-8 without progress/ANSI noise.
+pub const ENCODED_EXEC_PROLOGUE: &str = concat!(
+    "$ProgressPreference = 'SilentlyContinue'\n",
+    "if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }\n",
+    "try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}\n",
+);
+
+/// Epilogue appended inside non-interactive `-EncodedCommand` scripts so native process
+/// exit codes (`$LASTEXITCODE`) and cmdlet failures (`$?`) propagate accurately, with a
+/// blank line guarding against a trailing backtick on the user's final line.
+pub const ENCODED_EXEC_EPILOGUE: &str = concat!(
+    "\n\n",
+    "$__ok = $?; $__code = $LASTEXITCODE\n",
+    "if (-not $__ok) { if ($__code) { exit $__code } else { exit 1 } }\n",
+    "exit 0\n",
+);
 
 pub fn prefix_powershell_script_with_utf8(command: &[String]) -> Vec<String> {
     let Some((_, script)) = extract_powershell_command(command) else {
@@ -32,14 +63,133 @@ pub fn prefix_powershell_script_with_utf8(command: &[String]) -> Vec<String> {
     command
 }
 
+/// Encodes a PowerShell script string as UTF-16LE Base64 for `-EncodedCommand`.
+pub fn encode_powershell_utf16le_base64(script: &str) -> String {
+    let mut utf16le = Vec::with_capacity(script.len() * 2);
+    for unit in script.encode_utf16() {
+        utf16le.extend_from_slice(&unit.to_le_bytes());
+    }
+    BASE64_STANDARD.encode(utf16le)
+}
+
+/// Decodes a UTF-16LE Base64 `-EncodedCommand` payload back into UTF-8.
+pub fn decode_powershell_utf16le_base64(encoded: &str) -> Option<String> {
+    let bytes = BASE64_STANDARD.decode(encoded.trim()).ok()?;
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&units).ok()
+}
+
+fn strip_encoded_wrapper(script: &str) -> &str {
+    let without_prologue = script
+        .strip_prefix(ENCODED_EXEC_PROLOGUE)
+        .or_else(|| script.strip_prefix(UTF8_OUTPUT_PREFIX))
+        .unwrap_or(script);
+    without_prologue
+        .strip_suffix(ENCODED_EXEC_EPILOGUE)
+        .unwrap_or(without_prologue)
+}
+
+/// Wraps a raw PowerShell script with BOM-less UTF-8 encoding setup and optional
+/// exit-code preservation for `-EncodedCommand` execution.
+pub fn wrap_powershell_script_for_encoded_exec(script: &str, preserve_exit_code: bool) -> String {
+    let body = strip_encoded_wrapper(script);
+    if preserve_exit_code {
+        format!("{ENCODED_EXEC_PROLOGUE}{body}{ENCODED_EXEC_EPILOGUE}")
+    } else {
+        format!("{ENCODED_EXEC_PROLOGUE}{body}")
+    }
+}
+
+/// Rewrites a PowerShell `-Command <raw_script>` argv into a quote/newline-safe
+/// `-NoProfile -NonInteractive -InputFormat Text -OutputFormat Text -EncodedCommand <UTF-16LE-Base64>`
+/// invocation for `CreateProcessW`, while leaving already-encoded or non-PowerShell
+/// commands untouched.
+pub fn encode_powershell_command_for_exec(command: &[String]) -> Vec<String> {
+    encode_powershell_command_for_exec_with_options(command, /*non_interactive*/ true)
+}
+
+/// Variant of [`encode_powershell_command_for_exec`] that omits `-NonInteractive` and
+/// `-InputFormat Text` when launching an interactive `tty: true` PTY session.
+pub fn encode_powershell_command_for_exec_with_options(
+    command: &[String],
+    non_interactive: bool,
+) -> Vec<String> {
+    if has_encoded_command_flag(command) {
+        return command.to_vec();
+    }
+    let Some((shell, script)) = extract_powershell_command(command) else {
+        return command.to_vec();
+    };
+
+    let has_nologo = command[1..]
+        .iter()
+        .take_while(|arg| !arg.eq_ignore_ascii_case("-Command") && !arg.eq_ignore_ascii_case("-c"))
+        .any(|arg| arg.eq_ignore_ascii_case("-NoLogo"));
+
+    let wrapped = wrap_powershell_script_for_encoded_exec(script, non_interactive);
+    let encoded = encode_powershell_utf16le_base64(&wrapped);
+
+    let mut args = Vec::with_capacity(9);
+    args.push(shell.to_string());
+    if has_nologo {
+        args.push("-NoLogo".to_string());
+    }
+    args.push("-NoProfile".to_string());
+    if non_interactive {
+        args.push("-NonInteractive".to_string());
+        args.push("-InputFormat".to_string());
+        args.push("Text".to_string());
+        args.push("-OutputFormat".to_string());
+        args.push("Text".to_string());
+    }
+    args.push("-EncodedCommand".to_string());
+    args.push(encoded);
+    args
+}
+
+fn has_encoded_command_flag(command: &[String]) -> bool {
+    if command.len() < 3 {
+        return false;
+    }
+    if !matches!(
+        detect_shell_type(PathBuf::from(&command[0])),
+        Some(ShellType::PowerShell)
+    ) {
+        return false;
+    }
+    let mut i = 1usize;
+    while i + 1 < command.len() {
+        let lower = command[i].to_ascii_lowercase();
+        if matches!(lower.as_str(), "-encodedcommand" | "-ec") {
+            return i + 2 == command.len();
+        }
+        if POWERSHELL_VALUE_FLAGS.contains(&lower.as_str()) {
+            i += 2;
+            continue;
+        }
+        if POWERSHELL_SWITCH_FLAGS.contains(&lower.as_str()) {
+            i += 1;
+            continue;
+        }
+        return false;
+    }
+    false
+}
+
 /// Extract the PowerShell script body from an invocation such as:
 ///
-/// - ["pwsh", "-NoProfile", "-Command", "Get-ChildItem -Recurse | Select-String foo"]
-/// - ["powershell.exe", "-Command", "Write-Host hi"]
-/// - ["powershell", "-NoLogo", "-NoProfile", "-Command", "...script..."]
+/// - `["pwsh", "-NoProfile", "-Command", "Get-ChildItem -Recurse | Select-String foo"]`
+/// - `["powershell.exe", "-Command", "Write-Host hi"]`
+/// - `["powershell", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "...script..."]`
 ///
-/// Returns (`shell`, `script`) when the first arg is a PowerShell executable and a
-/// `-Command` (or `-c`) flag is present followed by a script string.
+/// Returns `(shell, script)` when the first arg is a PowerShell executable and a
+/// `-Command` (or `-c`) flag is present as the final flag followed by a script string.
 pub fn extract_powershell_command(command: &[String]) -> Option<(&str, &str)> {
     if command.len() < 3 {
         return None;
@@ -53,57 +203,133 @@ pub fn extract_powershell_command(command: &[String]) -> Option<(&str, &str)> {
         return None;
     }
 
-    // Find the first occurrence of -Command (accept common short alias -c as well)
     let mut i = 1usize;
     while i + 1 < command.len() {
         let flag = &command[i];
-        // Reject unknown flags
-        if !POWERSHELL_FLAGS.contains(&flag.to_ascii_lowercase().as_str()) {
-            return None;
+        let lower = flag.to_ascii_lowercase();
+        if lower == "-command" || lower == "-c" {
+            return (i + 2 == command.len()).then_some((shell.as_str(), command[i + 1].as_str()));
         }
-        if flag.eq_ignore_ascii_case("-Command") || flag.eq_ignore_ascii_case("-c") {
-            let script = &command[i + 1];
-            return Some((shell, script));
+        if POWERSHELL_VALUE_FLAGS.contains(&lower.as_str()) {
+            if i + 2 >= command.len() {
+                return None;
+            }
+            i += 2;
+            continue;
+        }
+        if !POWERSHELL_SWITCH_FLAGS.contains(&lower.as_str()) {
+            return None;
         }
         i += 1;
     }
     None
 }
 
+/// Extracts the PowerShell script from either `-Command` or `-EncodedCommand` invocations,
+/// stripping the internal UTF-8/exit-code wrapper if present.
+pub fn extract_powershell_script(command: &[String]) -> Option<(&str, Cow<'_, str>)> {
+    if let Some((shell, script)) = extract_powershell_command(command) {
+        return Some((shell, Cow::Borrowed(strip_encoded_wrapper(script))));
+    }
+    if has_encoded_command_flag(command) {
+        let decoded = decode_powershell_utf16le_base64(command.last()?)?;
+        let stripped = strip_encoded_wrapper(&decoded).to_string();
+        return Some((command[0].as_str(), Cow::Owned(stripped)));
+    }
+    None
+}
+
+static CLIXML_BLOCK_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?s)#< CLIXML\r?\n<Objs Version="[^"]*" xmlns="http://schemas\.microsoft\.com/powershell/2004/04">(.*?)</Objs>"#,
+    )
+    .expect("valid CLIXML block regex")
+});
+static CLIXML_STRING_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?s)<S S="([^"]*)">(.*?)</S>"#).expect("valid CLIXML string regex"));
+
+/// Decodes Windows PowerShell 5.1 `#< CLIXML` serialized stderr blocks back into readable
+/// UTF-8 plain text. Non-CLIXML output is returned unchanged without allocation overhead.
+pub fn decode_powershell_clixml(output: &str) -> String {
+    if !output.contains("#< CLIXML") {
+        return output.to_string();
+    }
+    CLIXML_BLOCK_RE
+        .replace_all(output, |caps: &regex::Captures<'_>| {
+            let mut decoded = String::new();
+            for item in CLIXML_STRING_RE.captures_iter(&caps[1]) {
+                let stream = &item[1];
+                if stream.eq_ignore_ascii_case("progress") {
+                    continue;
+                }
+                let unescaped_xml = unescape_xml_entities(&item[2]);
+                decoded.push_str(&unescape_clixml_hex(&unescaped_xml));
+            }
+            decoded.replace("\r\n", "\n")
+        })
+        .into_owned()
+}
+
+fn unescape_xml_entities(input: &str) -> String {
+    input
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+fn unescape_clixml_hex(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut utf16_run: Vec<u16> = Vec::new();
+    let flush_utf16 = |buf: &mut Vec<u16>, dest: &mut String| {
+        if !buf.is_empty() {
+            dest.push_str(&String::from_utf16_lossy(buf));
+            buf.clear();
+        }
+    };
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if i + 7 <= bytes.len()
+            && bytes[i] == b'_'
+            && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
+            && bytes[i + 6] == b'_'
+            && let Ok(hex_str) = std::str::from_utf8(&bytes[i + 2..i + 6])
+            && let Ok(unit) = u16::from_str_radix(hex_str, 16)
+        {
+            utf16_run.push(unit);
+            i += 7;
+            continue;
+        }
+        flush_utf16(&mut utf16_run, &mut out);
+        let ch = input[i..].chars().next().expect("valid char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    flush_utf16(&mut utf16_run, &mut out);
+    out
+}
+
 /// Parse the script body from a top-level PowerShell wrapper into argv-like commands.
-///
-/// This only unwraps the `-Command`/`-c` body from a PowerShell invocation we
-/// already recognize, then lowers the script in-process.
 pub fn parse_powershell_command_into_plain_commands(
     command: &[String],
 ) -> Option<Vec<Vec<String>>> {
-    let (_, script) = extract_powershell_command(command)?;
-    try_parse_powershell_commands(script)
+    let (_, script) = extract_powershell_script(command)?;
+    try_parse_powershell_commands(&script)
 }
 
 /// Parse literal PowerShell commands without starting a PowerShell executable.
-///
-/// Unknown or dynamic syntax stays opaque so unfamiliar executables can be
-/// evaluated without running them before approval.
 pub fn parse_powershell_script_into_plain_commands(script: &str) -> Option<Vec<Vec<String>>> {
     try_parse_powershell_commands(script)
 }
 
-/// This function attempts to find a powershell.exe executable on the system.
+/// Attempts to find a `powershell.exe` executable on the system.
 pub fn try_find_powershell_executable_blocking() -> Option<AbsolutePathBuf> {
     try_find_powershellish_executable_in_path(&["powershell.exe"])
 }
 
-/// This function attempts to find a pwsh.exe executable on the system.
-/// Note that pwsh.exe and powershell.exe are different executables:
-///
-/// - pwsh.exe is the cross-platform PowerShell Core (v6+) executable
-/// - powershell.exe is the Windows PowerShell (v5.1 and earlier) executable
-///
-/// Further, while powershell.exe is included by default on Windows systems,
-/// pwsh.exe must be installed separately by the user. And even when the user
-/// has installed pwsh.exe, it may not be available in the system PATH, in which
-/// case we attempt to locate it via other means.
+/// Attempts to find a `pwsh.exe` executable on the system.
 pub fn try_find_pwsh_executable_blocking() -> Option<AbsolutePathBuf> {
     if let Some(ps_home) = std::process::Command::new("cmd")
         .args(["/C", "pwsh", "-NoProfile", "-Command", "$PSHOME"])
@@ -149,7 +375,6 @@ fn try_find_powershellish_executable_in_path(candidates: &[&str]) -> Option<Abso
 }
 
 fn is_powershellish_executable_available(powershell_or_pwsh_exe: &std::path::Path) -> bool {
-    // This test works for both powershell.exe and pwsh.exe.
     std::process::Command::new(powershell_or_pwsh_exe)
         .args(["-NoLogo", "-NoProfile", "-Command", "Write-Output ok"])
         .output()
@@ -158,134 +383,5 @@ fn is_powershellish_executable_available(powershell_or_pwsh_exe: &std::path::Pat
 }
 
 #[cfg(test)]
-mod tests {
-    use super::UTF8_OUTPUT_PREFIX;
-    use super::extract_powershell_command;
-    #[cfg(windows)]
-    use super::parse_powershell_command_into_plain_commands;
-    use super::parse_powershell_script_into_plain_commands;
-    use super::prefix_powershell_script_with_utf8;
-
-    #[test]
-    fn extracts_basic_powershell_command() {
-        let cmd = vec![
-            "powershell".to_string(),
-            "-Command".to_string(),
-            "Write-Host hi".to_string(),
-        ];
-        let (_shell, script) = extract_powershell_command(&cmd).expect("extract");
-        assert_eq!(script, "Write-Host hi");
-    }
-
-    #[test]
-    fn extracts_lowercase_flags() {
-        let cmd = vec![
-            "powershell".to_string(),
-            "-nologo".to_string(),
-            "-command".to_string(),
-            "Write-Host hi".to_string(),
-        ];
-        let (_shell, script) = extract_powershell_command(&cmd).expect("extract");
-        assert_eq!(script, "Write-Host hi");
-    }
-
-    #[test]
-    fn extracts_full_path_powershell_command() {
-        let command = if cfg!(windows) {
-            "C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string()
-        } else {
-            "/usr/local/bin/powershell.exe".to_string()
-        };
-        let cmd = vec![command, "-Command".to_string(), "Write-Host hi".to_string()];
-        let (_shell, script) = extract_powershell_command(&cmd).expect("extract");
-        assert_eq!(script, "Write-Host hi");
-    }
-
-    #[test]
-    fn extracts_with_noprofile_and_alias() {
-        let cmd = vec![
-            "pwsh".to_string(),
-            "-NoProfile".to_string(),
-            "-c".to_string(),
-            "Get-ChildItem | Select-String foo".to_string(),
-        ];
-        let (_shell, script) = extract_powershell_command(&cmd).expect("extract");
-        assert_eq!(script, "Get-ChildItem | Select-String foo");
-    }
-
-    #[test]
-    fn parses_powershell_command_chains_and_preserves_windows_paths() {
-        assert_eq!(
-            parse_powershell_script_into_plain_commands(r"echo safe && Remove-Item C:\important"),
-            Some(vec![
-                vec!["echo".to_string(), "safe".to_string()],
-                vec!["Remove-Item".to_string(), r"C:\important".to_string()],
-            ]),
-        );
-    }
-
-    #[test]
-    fn prefixes_powershell_command_with_best_effort_utf8() {
-        let cmd = vec![
-            "powershell".to_string(),
-            "-Command".to_string(),
-            "Write-Host hi".to_string(),
-        ];
-
-        let prefixed = prefix_powershell_script_with_utf8(&cmd);
-
-        assert_eq!(
-            prefixed,
-            vec![
-                "powershell".to_string(),
-                "-Command".to_string(),
-                format!("{UTF8_OUTPUT_PREFIX}Write-Host hi"),
-            ]
-        );
-    }
-
-    #[test]
-    fn does_not_duplicate_utf8_prefix() {
-        let cmd = vec![
-            "powershell".to_string(),
-            "-Command".to_string(),
-            format!("{UTF8_OUTPUT_PREFIX}Write-Host hi"),
-        ];
-
-        assert_eq!(prefix_powershell_script_with_utf8(&cmd), cmd);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn parses_plain_powershell_commands() {
-        let commands = parse_powershell_command_into_plain_commands(&[
-            "powershell.exe".to_string(),
-            "-NoProfile".to_string(),
-            "-Command".to_string(),
-            "echo hi".to_string(),
-        ])
-        .expect("parse");
-
-        assert_eq!(commands, vec![vec!["echo".to_string(), "hi".to_string()]]);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn parses_multiple_plain_powershell_commands() {
-        let commands = parse_powershell_command_into_plain_commands(&[
-            "powershell.exe".to_string(),
-            "-NoProfile".to_string(),
-            "-Command".to_string(),
-            "Write-Output foo | Measure-Object".to_string(),
-        ])
-        .expect("parse");
-
-        assert_eq!(
-            commands,
-            vec![
-                vec!["Write-Output".to_string(), "foo".to_string()],
-                vec!["Measure-Object".to_string()],
-            ]
-        );
-    }
-}
+#[path = "powershell_tests.rs"]
+mod tests;

@@ -306,6 +306,8 @@ pub(crate) async fn run_turn(
     }
 
     let user_input = turn_user_input(&input);
+    let readonly_guard_active =
+        super::hanzo_guards::update_readonly_guard_from_user_input(&sess, &user_input);
     // Hanzo: the thread's controller adds routing hints to the turn's request metadata.
     if let Some(handle) = sess
         .services
@@ -435,7 +437,7 @@ pub(crate) async fn run_turn(
     );
     let mut world_state = record_context??;
 
-    let Some((injection_items, explicitly_enabled_connectors)) = build_skills_and_plugins(
+    let Some((mut injection_items, explicitly_enabled_connectors)) = build_skills_and_plugins(
         &sess,
         first_step_context.as_ref(),
         &user_input,
@@ -446,6 +448,9 @@ pub(crate) async fn run_turn(
     else {
         return Ok(None);
     };
+    if readonly_guard_active {
+        injection_items.push(super::hanzo_guards::readonly_reminder_item());
+    }
 
     if run_pending_session_start_hooks(&sess, &turn_context).await {
         return Ok(None);
@@ -596,6 +601,10 @@ pub(crate) async fn run_turn(
             Vec::new()
         };
 
+        if !pending_input.is_empty() {
+            let steered_user_input = turn_user_input(&pending_input);
+            super::hanzo_guards::update_readonly_guard_from_user_input(&sess, &steered_user_input);
+        }
         if run_hooks_and_record_inputs(
             &sess,
             &turn_context,
@@ -851,13 +860,14 @@ pub(crate) async fn run_turn(
                 if !needs_follow_up {
                     last_agent_message = sampling_request_last_agent_message;
                     if let Some(ask) = announce.ask(
-                        super::announce::applies(
-                            turn_context.config.model_provider_id.as_str(),
-                            turn_context.config.model_provider.base_url.as_deref(),
-                            &step_context.settings.model_info.slug,
-                            &turn_context.session_source,
-                            turn_context.mode(),
-                        ),
+                        !super::hanzo_guards::is_readonly_guard_active(&sess)
+                            && super::announce::applies(
+                                turn_context.config.model_provider_id.as_str(),
+                                turn_context.config.model_provider.base_url.as_deref(),
+                                &step_context.settings.model_info.slug,
+                                &turn_context.session_source,
+                                turn_context.mode(),
+                            ),
                         last_agent_message.as_deref(),
                         &sess.item_id_generator,
                     ) {

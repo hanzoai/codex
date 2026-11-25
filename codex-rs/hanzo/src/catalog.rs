@@ -198,10 +198,10 @@ pub fn compact_name<'a>(slug: &str, display_name: &'a str) -> &'a str {
     {
         return "Enso";
     }
-    if let Some(stripped) = display_name.trim().strip_suffix(" Auto") {
-        if !stripped.is_empty() {
-            return stripped;
-        }
+    if let Some(stripped) = display_name.trim().strip_suffix(" Auto")
+        && !stripped.is_empty()
+    {
+        return stripped;
     }
     if let Some(model) = find(trimmed_slug) {
         if let Some(stripped) = model.name.strip_suffix(" Auto") {
