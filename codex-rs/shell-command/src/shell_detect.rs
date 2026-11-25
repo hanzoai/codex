@@ -46,6 +46,14 @@ pub fn detect_shell_type(shell_path: impl AsRef<std::path::Path>) -> Option<Shel
         Some("pwsh") => Some(ShellType::PowerShell),
         Some("powershell") => Some(ShellType::PowerShell),
         _ => {
+            if let Some(raw) = shell_path.as_os_str().to_str() {
+                let base = raw.rsplit(['/', '\\']).next().unwrap_or(raw);
+                let lower = base.to_ascii_lowercase();
+                let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
+                if stem != raw {
+                    return detect_shell_type(stem);
+                }
+            }
             let shell_name = shell_path.file_stem();
             if let Some(shell_name) = shell_name {
                 let shell_name_path = std::path::Path::new(shell_name);
@@ -503,6 +511,36 @@ mod tests {
         assert_eq!(
             detect_shell_type(PathBuf::from("cmd.exe")),
             Some(ShellType::Cmd)
+        );
+    }
+
+    #[test]
+    fn test_detect_shell_type_windows_paths_cross_platform() {
+        for path in [
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            r"C:\WINDOWS\SYSTEM32\WINDOWSPOWERSHELL\V1.0\POWERSHELL.EXE",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"C:\Program Files\PowerShell\7\PWSH.EXE",
+            "PowerShell.Exe",
+            "PWSH.EXE",
+        ] {
+            assert_eq!(
+                detect_shell_type(PathBuf::from(path)),
+                Some(ShellType::PowerShell),
+                "expected PowerShell for {path}"
+            );
+        }
+        assert_eq!(
+            detect_shell_type(PathBuf::from(r"C:\Windows\System32\cmd.exe")),
+            Some(ShellType::Cmd)
+        );
+        assert_eq!(
+            detect_shell_type(PathBuf::from(r"C:\Program Files\Git\bin\bash.exe")),
+            Some(ShellType::Bash)
+        );
+        assert_eq!(
+            detect_shell_type(PathBuf::from(r"C:\Tools\fish.exe")),
+            None
         );
     }
 }
