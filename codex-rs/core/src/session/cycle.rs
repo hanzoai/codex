@@ -10,7 +10,6 @@
 
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
@@ -65,7 +64,7 @@ impl Repeat {
     pub(crate) fn check<'a>(
         &mut self,
         history: impl ExactSizeIterator<Item = &'a ResponseItem>,
-    ) -> CodexResult<Option<ResponseItem>> {
+    ) -> CodexResult<Option<&'static str>> {
         let total = history.len();
         let start = self.seen.replace(total);
         let Some(start) = start.filter(|start| *start <= total) else {
@@ -76,15 +75,10 @@ impl Repeat {
         if current.is_some() && current == self.previous {
             if !self.reminded {
                 self.reminded = true;
-                return Ok(Some(ResponseItem::Message {
-                    id: None,
-                    role: "developer".to_string(),
-                    content: vec![ContentItem::InputText {
-                        text: "The last two tool steps made the same calls and returned the same results. Use the results already in the conversation, and continue the task with a different next action.".to_string(),
-                    }],
-                    end_turn: None,
-                    phase: None,
-                }));
+                return Ok(Some(
+                    "The last two tool steps made the same calls and returned the same results. \
+                     Use the results already in the conversation and continue the task with a different next action.",
+                ));
             }
             let calls = current
                 .iter()

@@ -12,6 +12,12 @@ fn user(text: &str) -> ResponseItem {
     )
 }
 
+fn developer(text: &str) -> ResponseItem {
+    item(json!({
+        "type": "message", "role": "developer", "content": [{"type": "input_text", "text": text}]
+    }))
+}
+
 fn call(id: &str, cmd: &str) -> ResponseItem {
     item(json!({
         "type": "function_call",
@@ -34,7 +40,7 @@ fn step(
     repeat: &mut Repeat,
     history: &mut Vec<ResponseItem>,
     step: Vec<ResponseItem>,
-) -> CodexResult<Option<ResponseItem>> {
+) -> CodexResult<Option<&'static str>> {
     history.extend(step);
     repeat.check(history.iter())
 }
@@ -67,8 +73,8 @@ fn repeated_read_gets_one_chance_to_continue() {
     )
     .unwrap()
     .expect("the duplicate read should give the turn a chance to recover");
-    assert!(matches!(&reminder, ResponseItem::Message { role, .. } if role == "developer"));
-    history.push(reminder);
+    assert!(reminder.contains("Use the results already in the conversation"));
+    history.push(developer(reminder));
     let err = step(
         &mut repeat,
         &mut history,
@@ -112,7 +118,7 @@ fn a_different_result_or_call_is_progress() {
     )
     .unwrap()
     .expect("same call and result should prompt a new action");
-    history.push(reminder);
+    history.push(developer(reminder));
     assert_eq!(
         step(
             &mut repeat,

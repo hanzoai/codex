@@ -15,6 +15,7 @@ use crate::compact_remote_v2::BackgroundCompactionCandidate;
 use crate::compact_remote_v2::run_inline_remote_auto_compact_task as run_inline_remote_auto_compact_task_v2;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
+use crate::context::DeveloperInstructions;
 use crate::context::UserVerificationNotice;
 use crate::context_manager::rejected_audio;
 use crate::cyber_access_program;
@@ -698,7 +699,9 @@ pub(crate) async fn run_turn(
                 sess.record_conversation_items(
                     &turn_context,
                     &step_context.settings.model_info,
-                    &[reminder],
+                    &[ContextualUserFragment::into(DeveloperInstructions::new(
+                        reminder,
+                    ))],
                 )
                 .await;
                 sampling_request_input = sess.clone_history().await;
