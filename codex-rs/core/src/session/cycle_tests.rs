@@ -34,32 +34,52 @@ fn step(
     repeat: &mut Repeat,
     history: &mut Vec<ResponseItem>,
     step: Vec<ResponseItem>,
-) -> CodexResult<()> {
+) -> CodexResult<Option<ResponseItem>> {
     history.extend(step);
     repeat.check(history.iter())
 }
 
 #[test]
-fn the_same_call_answered_the_same_twice_fails_the_turn() {
+fn repeated_read_gets_one_chance_to_continue() {
     let mut repeat = Repeat::default();
-    let mut history = vec![user("list the files")];
-    repeat.check(history.iter()).unwrap();
-    step(
+    let mut history = vec![user("inspect the Enso ring and continue the fix")];
+    let command = "cd /workspace/dev && cat packages/client-runtime/src/ensoRing.ts";
+    assert_eq!(repeat.check(history.iter()).unwrap(), None);
+    assert_eq!(
+        step(
+            &mut repeat,
+            &mut history,
+            vec![
+                call("c1", command),
+                output("c1", "a1", "0.0010", "export {};\n")
+            ],
+        )
+        .unwrap(),
+        None
+    );
+    let reminder = step(
         &mut repeat,
         &mut history,
-        vec![call("c1", "ls"), output("c1", "a1", "0.0010", "src\n")],
+        vec![
+            call("c2", command),
+            output("c2", "b2", "0.0042", "export {};\n"),
+        ],
     )
-    .unwrap();
+    .unwrap()
+    .expect("the duplicate read should give the turn a chance to recover");
+    assert!(matches!(&reminder, ResponseItem::Message { role, .. } if role == "developer"));
+    history.push(reminder);
     let err = step(
         &mut repeat,
         &mut history,
-        vec![call("c2", "ls"), output("c2", "b2", "0.0042", "src\n")],
+        vec![
+            call("c3", command),
+            output("c3", "c3", "0.0120", "export {};\n"),
+        ],
     )
     .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        r#"unsupported operation: repeated identical tool-use cycle detected; refusing to continue after duplicate tool calls: {"type":"function_call","name":"exec_command","namespace":null,"arguments":"{\"cmd\":\"ls\"}"}"#
-    );
+    assert!(err.to_string().contains(MARK));
+    assert!(err.to_string().contains(command));
 }
 
 #[test]
@@ -85,6 +105,26 @@ fn a_different_result_or_call_is_progress() {
         vec![call("c3", "ls -a"), output("c3", "c", "0.1", "two\n")],
     )
     .unwrap();
+    let reminder = step(
+        &mut repeat,
+        &mut history,
+        vec![call("c4", "ls -a"), output("c4", "d", "0.1", "two\n")],
+    )
+    .unwrap()
+    .expect("same call and result should prompt a new action");
+    history.push(reminder);
+    assert_eq!(
+        step(
+            &mut repeat,
+            &mut history,
+            vec![
+                call("c5", "git status"),
+                output("c5", "e", "0.1", "clean\n")
+            ],
+        )
+        .unwrap(),
+        None,
+    );
 }
 
 #[test]
