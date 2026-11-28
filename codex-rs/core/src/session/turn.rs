@@ -15,6 +15,7 @@ use crate::compact_remote_v2::BackgroundCompactionCandidate;
 use crate::compact_remote_v2::run_inline_remote_auto_compact_task as run_inline_remote_auto_compact_task_v2;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
+use crate::context::DeveloperInstructions;
 use crate::context::UserVerificationNotice;
 use crate::context_manager::rejected_audio;
 use crate::cyber_access_program;
@@ -584,7 +585,6 @@ pub(crate) async fn run_turn(
 
     let mut next_step_context = Some(first_step_context);
     let mut guardian_budget_compacted = false;
-    // Hanzo: a step that repeats the one before it, calls and results alike, ends the turn.
     let mut repeat = super::cycle::Repeat::default();
     // Hanzo: a turn that ends on an announcement of its next step is asked to make the call.
     let mut announce = super::announce::Announce::default();
@@ -691,11 +691,21 @@ pub(crate) async fn run_turn(
                 .await;
 
             // Construct the input that we will send to the model.
-            let sampling_request_input = sess
+            let mut sampling_request_input = sess
                 .clone_history()
                 .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
                 .await;
-            repeat.check(sampling_request_input.raw_items())?;
+            if let Some(reminder) = repeat.check(sampling_request_input.raw_items())? {
+                sess.record_conversation_items(
+                    &turn_context,
+                    &step_context.settings.model_info,
+                    &[ContextualUserFragment::into(DeveloperInstructions::new(
+                        reminder,
+                    ))],
+                )
+                .await;
+                sampling_request_input = sess.clone_history().await;
+            }
 
             run_sampling_request(
                 Arc::clone(&sess),

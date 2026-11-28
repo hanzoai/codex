@@ -1,10 +1,9 @@
-//! Hanzo: a turn whose model makes the same tool calls twice in a row and is answered the
-//! same both times ends there, failing with [`MARK`] and the calls.
+//! Hanzo: a turn that repeats a tool step gets one reminder to change course.
 //!
 //! A step is what the model asked for in one sampling request and what its tools answered:
 //! the items one step appended to history, read when the next step begins. Two steps in a
 //! row with the same calls (name, namespace and arguments; never the call id) and the same
-//! results fail the turn before a third request is sent. A result is compared without the
+//! results trigger that reminder. A later repeat fails with [`MARK`]. Results are compared without the
 //! exec envelope's `Chunk ID` and `Wall time`, which differ on every run of one command.
 //! A step that made no call, a user message between steps, or history that shrank under
 //! compaction starts the comparison over.
@@ -57,23 +56,30 @@ struct Step {
 pub(crate) struct Repeat {
     seen: Option<usize>,
     previous: Option<Step>,
+    reminded: bool,
 }
 
 impl Repeat {
-    /// Called with the history a step is about to send. Fails when the step that just ended
-    /// repeated the one before it.
+    /// Returns the turn's one course correction, or fails on a repeat after it.
     pub(crate) fn check<'a>(
         &mut self,
         history: impl ExactSizeIterator<Item = &'a ResponseItem>,
-    ) -> CodexResult<()> {
+    ) -> CodexResult<Option<&'static str>> {
         let total = history.len();
         let start = self.seen.replace(total);
         let Some(start) = start.filter(|start| *start <= total) else {
             self.previous = None;
-            return Ok(());
+            return Ok(None);
         };
         let current = Step::read(history.skip(start));
         if current.is_some() && current == self.previous {
+            if !self.reminded {
+                self.reminded = true;
+                return Ok(Some(
+                    "The last two tool steps made the same calls and returned the same results. \
+                     Use the results already in the conversation and continue the task with a different next action.",
+                ));
+            }
             let calls = current
                 .iter()
                 .flat_map(|step| &step.calls)
@@ -83,12 +89,13 @@ impl Repeat {
             return Err(CodexErr::UnsupportedOperation(format!("{MARK} {calls}")));
         }
         self.previous = current;
-        Ok(())
+        Ok(None)
     }
 
     /// History was rewritten (compaction): what came before it is no longer a step.
     pub(crate) fn reset(&mut self) {
-        *self = Self::default();
+        self.seen = None;
+        self.previous = None;
     }
 }
 
